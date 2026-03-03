@@ -8,8 +8,9 @@
 #include <fstream>
 #include <memory>
 #include <omp.h>
+#include <unordered_map>
 
-// Forward declarations needed by utils.h
+// Forward declarations needed by utils.h (before matrix.h includes utils.h)
 struct SegQuery {
     SegQuery() : L(0), R(0), data_(nullptr) {}
     SegQuery(unsigned left_range, unsigned right_range, float *data)
@@ -28,8 +29,8 @@ inline auto bruteforce_range_search(const SegQuery&, float*, unsigned, unsigned)
 #include "matrix.h"
 
 #define HNSW_CUBE_M 32  // Internal edges per node
-#define HNSW_CUBE_efConstruction 100  // Reduced for faster build
-#define CUBE_THRESHOLD 50000  // Minimum vectors per cube (larger for faster build)
+#define HNSW_CUBE_efConstruction 200  // Reduced for faster build
+#define CUBE_THRESHOLD 5000  // Minimum vectors per cube (larger for faster build)
 
 // Multi-dimensional bounding box
 struct CubeBoundingBox {
@@ -143,7 +144,9 @@ public:
     std::vector<CubeNode*> children;
     std::vector<CubeNode*> neighbors;  // Adjacent cubes at same level
     int level;
-    int cube_id;  // Unique ID for this cube
+    int cube_id;  // Unique ID for this cube (linear index in grid)
+    std::vector<int> grid_position;  // Position in the grid (for 2D: [i,j], for 3D: [i,j,k])
+    std::vector<int> grid_size;  // Size of the grid at this level (for each dimension)
 
     CubeNode() : index(nullptr), level(0), cube_id(-1) {}
 
@@ -157,15 +160,58 @@ public:
     bool is_leaf() const {
         return children.empty();
     }
+
+    // Compute linear index from grid position
+    int compute_linear_index() const {
+        if (grid_position.empty() || grid_size.empty()) return -1;
+        int idx = 0;
+        int multiplier = 1;
+        for (size_t d = 0; d < grid_position.size(); d++) {
+            idx += grid_position[d] * multiplier;
+            multiplier *= grid_size[d];
+        }
+        return idx;
+    }
+
+    // Get neighbor cube ID in a specific direction
+    // direction: 0=negative, 1=positive for each dimension
+    // For 2D: 0=left, 1=right, 2=bottom, 3=top
+    // For 3D: 0=left, 1=right, 2=bottom, 3=top, 4=back, 5=front
+    // Returns linear index based on grid position
+    int get_neighbor_id_in_direction(int dir) const {
+        if (grid_position.empty() || grid_size.empty()) return -1;
+
+        int dim = dir / 2;  // Which dimension (0=dim0_negative, 1=dim0_positive, 2=dim1_negative, ...)
+        int sign = dir % 2;  // 0 = negative direction, 1 = positive direction
+
+        if (dim >= static_cast<int>(grid_position.size())) return -1;
+
+        int new_pos = grid_position[dim] + (sign == 0 ? -1 : 1);
+
+        // Check bounds
+        if (new_pos < 0 || new_pos >= grid_size[dim]) return -1;
+
+        // Compute neighbor's linear index using row-major order
+        int neighbor_id = 0;
+        int multiplier = 1;
+        for (size_t d = 0; d < grid_position.size(); d++) {
+            int pos = grid_position[d];
+            if (d == static_cast<size_t>(dim)) pos = new_pos;
+            neighbor_id += pos * multiplier;
+            multiplier *= grid_size[d];
+        }
+
+        return neighbor_id;
+    }
 };
 
 // Main cube-based index class
 class IndexCube {
 public:
-    IndexCube() : attr_dim_(0), vec_dim_(0), num_vectors_(0), root_(nullptr), next_cube_id_(0) {}
+    IndexCube() : attr_dim_(0), vec_dim_(0), num_vectors_(0), root_(nullptr) {}
 
     IndexCube(size_t attr_dim, size_t vec_dim)
-        : attr_dim_(attr_dim), vec_dim_(vec_dim), num_vectors_(0), root_(nullptr), next_cube_id_(0) {}
+        : attr_dim_(attr_dim), vec_dim_(vec_dim), num_vectors_(0), root_(nullptr) {}
 
     ~IndexCube() {
         if (root_) delete root_;
@@ -207,7 +253,7 @@ public:
             all_ids[i] = i;
         }
 
-        root_ = build_cube_recursive(global_bbox, all_ids, 0);
+        root_ = build_cube_recursive(global_bbox, all_ids, 0, {}, {});
 
         // Build cross-cube edges
         std::cout << "Building cross-cube edges..." << std::endl;
@@ -282,7 +328,6 @@ private:
     size_t num_vectors_;
     CubeNode* root_;
     std::vector<std::vector<float>> metadata_;
-    int next_cube_id_;
 
     // Load metadata from binary file
     void load_metadata(const char* metadata_path) {
@@ -314,13 +359,17 @@ private:
     CubeNode* build_cube_recursive(
             const CubeBoundingBox& bbox,
             const std::vector<hnswlib::labeltype>& point_ids,
-            int level) {
+            int level,
+            const std::vector<int>& grid_pos = {},
+            const std::vector<int>& grid_sz = {}) {
 
         CubeNode* node = new CubeNode();
         node->bbox = bbox;
         node->point_ids = point_ids;
         node->level = level;
-        node->cube_id = next_cube_id_++;
+        node->grid_position = grid_pos;
+        node->grid_size = grid_sz;
+        node->cube_id = node->compute_linear_index();  // Use linear index as cube_id
 
         // If few enough points, create leaf cube with HNSW index
         if (point_ids.size() <= CUBE_THRESHOLD) {
@@ -329,7 +378,7 @@ private:
         }
 
         // Otherwise, subdivide into 2^attr_dim_ children
-        subdivide_cube(node);
+        subdivide_cube(node, grid_pos, grid_sz);
 
         return node;
     }
@@ -364,7 +413,7 @@ private:
     }
 
     // Subdivide cube into 2^attr_dim_ children
-    void subdivide_cube(CubeNode* node) {
+    void subdivide_cube(CubeNode* node, const std::vector<int>& parent_grid_pos, const std::vector<int>& parent_grid_sz) {
         size_t num_children = 1 << attr_dim_;  // 2^attr_dim_
         node->children.resize(num_children, nullptr);
 
@@ -372,6 +421,14 @@ private:
         std::vector<float> midpoints(attr_dim_);
         for (size_t i = 0; i < attr_dim_; i++) {
             midpoints[i] = (node->bbox.min_bounds[i] + node->bbox.max_bounds[i]) / 2.0f;
+        }
+
+        // Calculate child grid size (double the parent in each dimension)
+        std::vector<int> child_grid_sz(attr_dim_, 2);
+        if (!parent_grid_sz.empty()) {
+            for (size_t i = 0; i < attr_dim_; i++) {
+                child_grid_sz[i] = parent_grid_sz[i] * 2;
+            }
         }
 
         // Create child bounding boxes and assign points
@@ -391,10 +448,19 @@ private:
             child_points[child_idx].push_back(id);
         }
 
-        // Create children
+        // Create children with grid positions
         for (size_t i = 0; i < num_children; i++) {
             if (child_points[i].empty()) {
                 continue;
+            }
+
+            // Compute child's grid position
+            std::vector<int> child_grid_pos = parent_grid_pos;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                int bit = (i >> d) & 1;  // 0 or 1
+                // Position doubles in each dimension and adds the bit
+                int base = parent_grid_pos.empty() ? 0 : parent_grid_pos[d] * 2;
+                child_grid_pos.push_back(base + bit);
             }
 
             CubeBoundingBox child_bbox(attr_dim_);
@@ -408,11 +474,11 @@ private:
                 }
             }
 
-            node->children[i] = build_cube_recursive(child_bbox, child_points[i], node->level + 1);
+            node->children[i] = build_cube_recursive(child_bbox, child_points[i], node->level + 1, child_grid_pos, child_grid_sz);
         }
     }
 
-    // Build cross-cube connections
+    // Build cross-cube connections using grid-based neighbor lookup (O(n) instead of O(n²))
     void build_cross_cube_connections(CubeNode* root) {
         // Collect all leaf cubes
         std::vector<CubeNode*> leaf_cubes;
@@ -420,15 +486,34 @@ private:
 
         std::cout << "  Total leaf cubes: " << leaf_cubes.size() << std::endl;
 
-        // Find neighbors for each cube (sequential due to shared data structures)
-        for (size_t i = 0; i < leaf_cubes.size(); i++) {
-            for (size_t j = i + 1; j < leaf_cubes.size(); j++) {
-                if (leaf_cubes[i]->bbox.is_adjacent(leaf_cubes[j]->bbox)) {
-                    leaf_cubes[i]->neighbors.push_back(leaf_cubes[j]);
-                    leaf_cubes[j]->neighbors.push_back(leaf_cubes[i]);
+        // Build a map from cube_id to cube pointer for O(1) lookup
+        std::unordered_map<int, CubeNode*> cube_by_id;
+        for (auto cube : leaf_cubes) {
+            cube_by_id[cube->cube_id] = cube;
+        }
+
+        // Find neighbors using grid positions (O(n * d) instead of O(n²))
+        // For each cube, check 2*attr_dim_ directions
+        int num_directions = 2 * attr_dim_;
+        for (auto cube : leaf_cubes) {
+            for (int dir = 0; dir < num_directions; dir++) {
+                int neighbor_id = cube->get_neighbor_id_in_direction(dir);
+
+                if (neighbor_id >= 0) {
+                    auto it = cube_by_id.find(neighbor_id);
+                    if (it != cube_by_id.end() && it->second != cube) {
+                        cube->neighbors.push_back(it->second);
+                    }
                 }
             }
         }
+
+        // Count total neighbor connections
+        size_t total_neighbors = 0;
+        for (auto cube : leaf_cubes) {
+            total_neighbors += cube->neighbors.size();
+        }
+        std::cout << "  Total neighbor connections: " << (total_neighbors / 2) << " (bidirectional)" << std::endl;
 
         std::cout << "  Building cross-cube edges..." << std::endl;
 
