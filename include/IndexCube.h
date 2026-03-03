@@ -12,19 +12,6 @@
 #include <limits>
 #include <cstdio>  // for remove
 
-// Forward declarations needed by utils.h (before matrix.h includes utils.h)
-struct SegQuery {
-    SegQuery() : L(0), R(0), data_(nullptr) {}
-    SegQuery(unsigned left_range, unsigned right_range, float *data)
-        : L(left_range), R(right_range), data_(data) {}
-    unsigned L, R;
-    float *data_;
-};
-
-// Stub for bruteforce_range_search to satisfy utils.h
-inline auto bruteforce_range_search(const SegQuery&, float*, unsigned, unsigned) {
-    return std::priority_queue<std::pair<float, unsigned>>();
-}
 
 #include "hnswlib/hnswlib.h"
 #include "hnswlib/hnsw-cube.h"
