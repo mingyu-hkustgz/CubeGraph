@@ -9,6 +9,8 @@
 #include <memory>
 #include <omp.h>
 #include <unordered_map>
+#include <limits>
+#include <cstdio>  // for remove
 
 // Forward declarations needed by utils.h (before matrix.h includes utils.h)
 struct SegQuery {
@@ -587,10 +589,324 @@ private:
         fout.write((char*)&vec_dim_, sizeof(size_t));
         fout.write((char*)&num_vectors_, sizeof(size_t));
 
-        // TODO: Implement full serialization
-        // For now, just write basic info
+        // Save metadata
+        fout.write((char*)&num_vectors_, sizeof(size_t));
+        fout.write((char*)&attr_dim_, sizeof(size_t));
+        for (size_t i = 0; i < num_vectors_; i++) {
+            fout.write((char*)metadata_[i].data(), attr_dim_ * sizeof(float));
+        }
+
+        // Save cube structure recursively
+        if (root_) {
+            save_cube_recursive(fout, root_);
+        }
 
         fout.close();
         std::cout << "Index saved to: " << output_path << std::endl;
+    }
+
+    // Load index from file
+    void load_index(const char* index_path, const char* data_path) {
+        std::ifstream fin(index_path, std::ios::binary);
+        if (!fin.is_open()) {
+            throw std::runtime_error("Cannot open index file");
+        }
+
+        // Read header
+        fin.read((char*)&attr_dim_, sizeof(size_t));
+        fin.read((char*)&vec_dim_, sizeof(size_t));
+        fin.read((char*)&num_vectors_, sizeof(size_t));
+
+        // Load vector data
+        Matrix<float>* X = new Matrix<float>(const_cast<char*>(data_path));
+        hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char*)X->data;
+
+        // Load metadata
+        size_t n, d;
+        fin.read((char*)&n, sizeof(size_t));
+        fin.read((char*)&d, sizeof(size_t));
+        metadata_.resize(n);
+        for (size_t i = 0; i < n; i++) {
+            metadata_[i].resize(d);
+            fin.read((char*)metadata_[i].data(), d * sizeof(float));
+        }
+
+        // Load cube structure
+        root_ = load_cube_recursive(fin);
+
+        fin.close();
+        std::cout << "Index loaded from: " << index_path << std::endl;
+    }
+
+    // Add a new point to the index
+    bool add_point(const float* vec, const std::vector<float>& attr, hnswlib::labeltype label) {
+        if (!root_ || vec_dim_ == 0 || attr.size() != attr_dim_) {
+            return false;
+        }
+
+        // Add to metadata
+        size_t id = metadata_.size();
+        metadata_.push_back(attr);
+
+        // Find the leaf cube for this point
+        CubeNode* leaf = find_leaf_cube(root_, attr);
+
+        if (leaf == nullptr || leaf->index == nullptr) {
+            // Need to create a new leaf or expand existing
+            return false;
+        }
+
+        // Add to the cube's HNSW index
+        leaf->index->addPoint(vec, label);
+        leaf->point_ids.push_back(label);
+
+        // Update cross-cube edges if needed
+        // (For simplicity, we don't rebuild edges for new points)
+
+        num_vectors_++;
+        return true;
+    }
+
+    // Delete a point from the index
+    bool delete_point(hnswlib::labeltype label) {
+        if (!root_) {
+            return false;
+        }
+
+        // Find the cube containing this point
+        CubeNode* leaf = find_leaf_cube_by_label(root_, label);
+
+        if (leaf == nullptr || leaf->index == nullptr) {
+            return false;
+        }
+
+        // Mark as deleted in HNSW
+        leaf->index->markDelete(label);
+
+        num_vectors_--;
+        return true;
+    }
+
+    // Update a point in the index
+    bool update_point(hnswlib::labeltype label, const float* new_vec, const std::vector<float>* new_attr) {
+        // First delete the old point
+        if (!delete_point(label)) {
+            return false;
+        }
+
+        // Add the new point
+        std::vector<float> attr = new_attr ? *new_attr : metadata_[label];
+        return add_point(new_vec, attr, label);
+    }
+
+    // Get index statistics
+    size_t get_num_vectors() const { return num_vectors_; }
+    size_t get_num_leaves() {
+        std::vector<CubeNode*> leaves;
+        collect_leaf_cubes(root_, leaves);
+        return leaves.size();
+    }
+
+private:
+    // Save cube recursively
+    void save_cube_recursive(std::ofstream& fout, CubeNode* node) {
+        if (!node) {
+            int has_node = 0;
+            fout.write((char*)&has_node, sizeof(int));
+            return;
+        }
+
+        int has_node = 1;
+        fout.write((char*)&has_node, sizeof(int));
+
+        // Save cube info
+        fout.write((char*)&node->level, sizeof(int));
+        fout.write((char*)&node->cube_id, sizeof(int));
+
+        // Save grid position
+        int grid_pos_size = node->grid_position.size();
+        fout.write((char*)&grid_pos_size, sizeof(int));
+        for (int pos : node->grid_position) {
+            fout.write((char*)&pos, sizeof(int));
+        }
+
+        // Save grid size
+        int grid_sz_size = node->grid_size.size();
+        fout.write((char*)&grid_sz_size, sizeof(int));
+        for (int sz : node->grid_size) {
+            fout.write((char*)&sz, sizeof(int));
+        }
+
+        // Save bounding box
+        for (float b : node->bbox.min_bounds) {
+            fout.write((char*)&b, sizeof(float));
+        }
+        for (float b : node->bbox.max_bounds) {
+            fout.write((char*)&b, sizeof(float));
+        }
+
+        // Save point IDs
+        int num_points = node->point_ids.size();
+        fout.write((char*)&num_points, sizeof(int));
+        for (hnswlib::labeltype id : node->point_ids) {
+            fout.write((char*)&id, sizeof(hnswlib::labeltype));
+        }
+
+        // Save HNSW index
+        int has_hnsw = (node->index != nullptr) ? 1 : 0;
+        fout.write((char*)&has_hnsw, sizeof(int));
+        if (node->index) {
+            // Save HNSW index - use a temporary filename
+            std::string hnsw_path = "/tmp/hnsw_temp.bin";
+            node->index->saveIndex(hnsw_path);
+
+            // Read and save HNSW data
+            std::ifstream hnsw_in(hnsw_path, std::ios::binary | std::ios::ate);
+            if (hnsw_in.is_open()) {
+                size_t hnsw_size = hnsw_in.tellg();
+                hnsw_in.seekg(0);
+                char* hnsw_data = new char[hnsw_size];
+                hnsw_in.read(hnsw_data, hnsw_size);
+                fout.write((char*)&hnsw_size, sizeof(size_t));
+                fout.write(hnsw_data, hnsw_size);
+                delete[] hnsw_data;
+                hnsw_in.close();
+                std::remove(hnsw_path.c_str());
+            }
+        }
+
+        // Save children
+        int num_children = node->children.size();
+        fout.write((char*)&num_children, sizeof(int));
+        for (auto child : node->children) {
+            save_cube_recursive(fout, child);
+        }
+    }
+
+    // Load cube recursively
+    CubeNode* load_cube_recursive(std::ifstream& fin) {
+        int has_node;
+        fin.read((char*)&has_node, sizeof(int));
+        if (!has_node) {
+            return nullptr;
+        }
+
+        CubeNode* node = new CubeNode();
+
+        // Read cube info
+        fin.read((char*)&node->level, sizeof(int));
+        fin.read((char*)&node->cube_id, sizeof(int));
+
+        // Read grid position
+        int grid_pos_size;
+        fin.read((char*)&grid_pos_size, sizeof(int));
+        node->grid_position.resize(grid_pos_size);
+        for (int i = 0; i < grid_pos_size; i++) {
+            fin.read((char*)&node->grid_position[i], sizeof(int));
+        }
+
+        // Read grid size
+        int grid_sz_size;
+        fin.read((char*)&grid_sz_size, sizeof(int));
+        node->grid_size.resize(grid_sz_size);
+        for (int i = 0; i < grid_sz_size; i++) {
+            fin.read((char*)&node->grid_size[i], sizeof(int));
+        }
+
+        // Read bounding box
+        node->bbox = CubeBoundingBox(attr_dim_);
+        for (int i = 0; i < attr_dim_; i++) {
+            fin.read((char*)&node->bbox.min_bounds[i], sizeof(float));
+        }
+        for (int i = 0; i < attr_dim_; i++) {
+            fin.read((char*)&node->bbox.max_bounds[i], sizeof(float));
+        }
+
+        // Read point IDs
+        int num_points;
+        fin.read((char*)&num_points, sizeof(int));
+        node->point_ids.resize(num_points);
+        for (int i = 0; i < num_points; i++) {
+            fin.read((char*)&node->point_ids[i], sizeof(hnswlib::labeltype));
+        }
+
+        // Read HNSW index
+        int has_hnsw;
+        fin.read((char*)&has_hnsw, sizeof(int));
+        if (has_hnsw) {
+            size_t hnsw_size;
+            fin.read((char*)&hnsw_size, sizeof(size_t));
+            char* hnsw_data = new char[hnsw_size];
+            fin.read(hnsw_data, hnsw_size);
+
+            // Write to temp file and load
+            std::string hnsw_path = "/tmp/hnsw_temp_load.bin";
+            std::ofstream hnsw_out(hnsw_path, std::ios::binary);
+            hnsw_out.write(hnsw_data, hnsw_size);
+            hnsw_out.close();
+            delete[] hnsw_data;
+
+            auto l2space = new hnswlib::L2Space(vec_dim_);
+            node->index = new hnswlib::HierarchicalNSWCube<float>(l2space, 0);
+            node->index->loadIndex(hnsw_path, l2space);
+            std::remove(hnsw_path.c_str());
+        }
+
+        // Read children
+        int num_children;
+        fin.read((char*)&num_children, sizeof(int));
+        node->children.resize(num_children, nullptr);
+        for (int i = 0; i < num_children; i++) {
+            node->children[i] = load_cube_recursive(fin);
+        }
+
+        return node;
+    }
+
+    // Find leaf cube for a point based on metadata
+    CubeNode* find_leaf_cube(CubeNode* node, const std::vector<float>& attr) {
+        if (!node) return nullptr;
+
+        if (node->is_leaf()) {
+            return node;
+        }
+
+        // Determine which child to follow
+        size_t child_idx = 0;
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float midpoint = (node->bbox.min_bounds[d] + node->bbox.max_bounds[d]) / 2.0f;
+            if (attr[d] >= midpoint) {
+                child_idx |= (1 << d);
+            }
+        }
+
+        if (child_idx < node->children.size() && node->children[child_idx]) {
+            return find_leaf_cube(node->children[child_idx], attr);
+        }
+
+        return nullptr;
+    }
+
+    // Find leaf cube by label
+    CubeNode* find_leaf_cube_by_label(CubeNode* node, hnswlib::labeltype label) {
+        if (!node) return nullptr;
+
+        if (node->is_leaf()) {
+            // Check if label is in this cube
+            for (hnswlib::labeltype id : node->point_ids) {
+                if (id == label) {
+                    return node;
+                }
+            }
+            return nullptr;
+        }
+
+        // Search children
+        for (auto child : node->children) {
+            CubeNode* result = find_leaf_cube_by_label(child, label);
+            if (result) return result;
+        }
+
+        return nullptr;
     }
 };
