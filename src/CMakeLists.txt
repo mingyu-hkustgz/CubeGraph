@@ -9,3 +9,5 @@ add_executable(range_search test_range_search.cpp)
 add_executable(test_grid_compile test_grid_compile.cpp)
 
 add_executable(test_rtree_compile test_rtree_compile.cpp)
+
+add_executable(test_cube_index test_cube_index.cpp)

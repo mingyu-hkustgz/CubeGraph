@@ -27,11 +27,14 @@ Makefile
 # Generated files
 *.log
 *.out
+*.png
 
 # DATA
 /DATA
 
 # Result
 /results
-/IMPLEMENTATION_SUMMARY.md
-/MULTIDIM_INDEX.md
+/docs/IMPLEMENTATION_SUMMARY.md
+/docs/MULTIDIM_INDEX.md
+/CLAUDE.md
+/docs/CUBE_REFINEMENT_SUMMARY.md
