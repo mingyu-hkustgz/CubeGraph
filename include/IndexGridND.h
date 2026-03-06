@@ -1,22 +1,7 @@
 #pragma once
 
-// Define SegQuery to satisfy utils.h (included by matrix.h)
-// This is a minimal definition from Index2D.h
-struct SegQuery {
-    SegQuery() : L(0), R(0), data_(nullptr) {}
-    SegQuery(unsigned left_range, unsigned right_range, float *data)
-        : L(left_range), R(right_range), data_(data) {}
-    unsigned L, R;
-    float *data_;
-};
-
-// Stub for bruteforce_range_search to satisfy utils.h
-inline auto bruteforce_range_search(const SegQuery&, float*, unsigned, unsigned) {
-    return std::priority_queue<std::pair<float, unsigned>>();
-}
-
 #include "hnswlib/hnswlib.h"
-#include "hnswlib/hnsw-static.h"
+#include "hnsw-static.h"
 #include "matrix.h"
 #include <vector>
 #include <cmath>

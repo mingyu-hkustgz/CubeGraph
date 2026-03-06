@@ -7,7 +7,7 @@
 
 #include <ctime>
 #include <cmath>
-#include "hnsw-static.h"
+#include "hnsw-cube.h"
 #include "matrix.h"
 #include "utils.h"
 #include <getopt.h>
@@ -22,7 +22,7 @@ double outer_recall = 0;
 
 static void get_gt(unsigned int *massQA, float *massQ, size_t vecsize, size_t qsize, L2Space &l2space,
                    size_t vecdim, vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
-                   size_t subk, HierarchicalNSWStatic<float> &appr_alg) {
+                   size_t subk, HierarchicalNSWCube<float> &appr_alg) {
 
     (vector<std::priority_queue<std::pair<float, labeltype >>>(qsize)).swap(answers);
     DISTFUNC<float> fstdistfunc_ = l2space.get_dist_func();
@@ -54,7 +54,7 @@ int recall(std::priority_queue<std::pair<float, labeltype >> &result,
 }
 
 
-static void test_approx(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWStatic<float> &appr_alg, size_t vecdim,
+static void test_approx(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWCube<float> &appr_alg, size_t vecdim,
                         vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k) {
     size_t correct = 0;
     size_t total = 0;
@@ -86,7 +86,7 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, Hierarchical
     return;
 }
 
-static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWStatic<float> &appr_alg, size_t vecdim,
+static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWCube<float> &appr_alg, size_t vecdim,
                            vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k) {
     vector<size_t> efs;
     unsigned efBase = efSearch;
@@ -156,15 +156,15 @@ int main(int argc, char *argv[]) {
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
     sprintf(groundtruth_path, "%s%s_groundtruth.ivecs", source, dataset);
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-flat.log", K, dataset, dataset);
-    sprintf(index_path, "%s%s.hnsw", source, dataset);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube.log", K, dataset, dataset);
+    sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
     Matrix<unsigned> G(groundtruth_path);
-    hnswlib::HierarchicalNSWStatic<float>::static_base_data_ = (char *) X.data;
+    hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X.data;
 
     L2Space l2space(Q.d);
-    auto *appr_alg = new HierarchicalNSWStatic<float>(&l2space, index_path, false);
+    auto *appr_alg = new HierarchicalNSWCube<float>(&l2space, index_path, false);
     freopen(result_path, "w", stdout);
     size_t k = G.d;
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;

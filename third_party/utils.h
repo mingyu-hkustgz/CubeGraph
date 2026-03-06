@@ -88,63 +88,6 @@ bool isFileExists_ifstream(const char *name) {
     return f.good();
 }
 
-void generata_range_ground_truth_with_fix_length(unsigned query_num, unsigned base_num, int length,
-                                                 unsigned D, unsigned K, float *base, float *query,
-                                                 std::vector<SegQuery> &Q, std::vector<std::vector<unsigned >> &gt) {
-    Q.resize(query_num);
-    gt.resize(query_num);
-    for (int i = 0; i < query_num; i++) {
-        unsigned L = 0, R = 0;
-        if(length>0){
-            if(length!=base_num)
-                L = rand() %(base_num - length);
-            R = L + length - 1;
-        }else{
-            L = rand()%base_num;
-            R = rand()%base_num;
-            if(L > R) std::swap(L,R);
-        }
-
-        Q[i].L = L;
-        Q[i].R = R;
-        Q[i].data_ = query + i * D;
-        auto res = bruteforce_range_search(Q[i], base, D, K);
-        gt[i].resize(K);
-        unsigned gt_back = K-1;
-        while(!res.empty()){
-            gt[i][gt_back] = res.top().second;
-            res.pop();
-            gt_back--;
-        }
-    }
-    std::cerr<<"Ground Truth Finished"<<std::endl;
-}
-
-void generata_half_range_ground_truth_with_fix_length(unsigned query_num, unsigned base_num, int length,
-                                                      unsigned D, unsigned K, float *base, float *query,
-                                                      std::vector<SegQuery> &Q, std::vector<std::vector<unsigned >> &gt) {
-    Q.resize(query_num);
-    gt.resize(query_num);
-    for (int i = 0; i < query_num; i++) {
-        unsigned L = 0, R = 0;
-        if(length > 0)
-            R = (length-1);
-        else
-            R = rand()%base_num;
-        Q[i].L = L;
-        Q[i].R = R;
-        Q[i].data_ = query + i * D;
-        auto res = bruteforce_range_search(Q[i], base, D, K);
-        gt[i].resize(K);
-        unsigned gt_back = K-1;
-        while(!res.empty()){
-            gt[i][gt_back] = res.top().second;
-            res.pop();
-            gt_back--;
-        }
-    }
-    std::cerr<<"Ground Truth Finished"<<std::endl;
-}
 
 
 typedef std::priority_queue<std::pair<float, hnswlib::labeltype>> ResultQueue;

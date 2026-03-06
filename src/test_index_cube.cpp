@@ -6,7 +6,7 @@
 
 #include "matrix.h"
 #include "utils.h"
-#include "hnsw-static.h"
+#include "hnsw-cube.h"
 #include "config.h"
 using namespace std;
 using namespace hnswlib;
@@ -54,15 +54,15 @@ int main(int argc, char * argv[]) {
         }
     }
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
-    sprintf(index_path, "%s%s.hnsw", source, dataset);
+    sprintf(index_path, "%s%s.cube", source, dataset);
 
     auto *X = new Matrix<float>(data_path);
-    hnswlib::HierarchicalNSWStatic<float>::static_base_data_ = (char *) X->data;
+    hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X->data;
     size_t D = X->d;
     size_t N = X->n;
     size_t report = 50000;
     L2Space l2space(D);
-    auto* appr_alg = new HierarchicalNSWStatic<float> (&l2space, N, HNSW_M, HNSW_efConstruction);
+    auto* appr_alg = new HierarchicalNSWCube<float> (&l2space, N,2,2, HNSW_M, HNSW_efConstruction);
     appr_alg->addPoint(X->data , 0);
     unsigned check_tag = 1;
 #pragma omp parallel for schedule(dynamic, 144)

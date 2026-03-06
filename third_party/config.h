@@ -5,12 +5,14 @@
 #include <sstream>
 #include <fstream>
 #include <cstring>
-#include "hnswlib/hnsw-static.h"
+#include "hnsw-static.h"
+#include "hnsw-cube.h"
 #define HNSW_M 16
 #define HNSW_efConstruction 200
 #define INDEX_ELASIIC_BOUND 4096
 
 template<typename dist_t> char *hnswlib::HierarchicalNSWStatic<dist_t>::static_base_data_ = NULL;
+template<typename dist_t> char *hnswlib::HierarchicalNSWCube<dist_t>::static_base_data_ = NULL;
 #define UNLIKELY(x) __builtin_expect(x, 0)
 
 namespace ANNS {

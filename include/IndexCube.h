@@ -14,7 +14,7 @@
 
 
 #include "hnswlib/hnswlib.h"
-#include "hnswlib/hnsw-cube.h"
+#include "hnsw-cube.h"
 #include "matrix.h"
 
 #define HNSW_CUBE_M 32  // Internal edges per node
@@ -392,6 +392,7 @@ private:
         );
 
         // Add points to index
+#pragma omp parallel for
         for (size_t i = 0; i < node->point_ids.size(); i++) {
             hnswlib::labeltype label = node->point_ids[i];
             node->index->addPoint(
@@ -481,7 +482,6 @@ private:
             cube_by_id[cube->cube_id] = cube;
         }
 
-        // Find neighbors using grid positions (O(n * d) instead of O(n²))
         // For each cube, check 2*attr_dim_ directions
         int num_directions = 2 * attr_dim_;
         for (auto cube : leaf_cubes) {
