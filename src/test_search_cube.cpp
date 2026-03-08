@@ -20,45 +20,24 @@ const int MAXK = 100;
 int efSearch = 100;
 double outer_recall = 0;
 
-static void get_gt(unsigned int *massQA, float *massQ, size_t vecsize, size_t qsize, L2Space &l2space,
-                   size_t vecdim, vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
-                   size_t subk, HierarchicalNSWCube<float> &appr_alg) {
-
-    (vector<std::priority_queue<std::pair<float, labeltype >>>(qsize)).swap(answers);
-    DISTFUNC<float> fstdistfunc_ = l2space.get_dist_func();
-    for (int i = 0; i < qsize; i++) {
+static void get_gt(Matrix<float> &Q, Matrix<float> &X, Matrix<unsigned > G, vector<std::priority_queue<std::pair<float, labeltype >>> &answers,
+                   size_t subk) {
+    (vector<std::priority_queue<std::pair<float, labeltype >>>(Q.n)).swap(answers);
+    for (int i = 0; i < Q.n; i++) {
         for (int j = 0; j < subk; j++) {
-            answers[i].emplace(
-                    appr_alg.fstdistfunc_(massQ + i * vecdim, appr_alg.getDataByInternalId(massQA[k * i + j]),
-                                          appr_alg.dist_func_param_), massQA[k * i + j]);
+            auto gt = G.data[G.d * i + j];
+            answers[i].emplace(sqr_dist(Q.data + i * Q.d ,X.data + gt * X.d, X.d), gt);
         }
     }
 }
-
-
-int recall(std::priority_queue<std::pair<float, labeltype >> &result,
-           std::priority_queue<std::pair<float, labeltype >> &gt) {
-    unordered_set<labeltype> g;
-    int ret = 0;
-    while (gt.size()) {
-        g.insert(gt.top().second);
-        gt.pop();
-    }
-    while (result.size()) {
-        if (g.find(result.top().second) != g.end()) {
-            ret++;
-        }
-        result.pop();
-    }
-    return ret;
-}
-
 
 static void test_approx(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWCube<float> &appr_alg, size_t vecdim,
                         vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k) {
     size_t correct = 0;
     size_t total = 0;
     long double total_time = 0;
+    long double total_ratio = 0;
+    size_t dist_count = 0;
 
 
     for (int i = 0; i < qsize; i++) {
@@ -67,7 +46,7 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, Hierarchical
         struct rusage run_start, run_end;
         GetCurTime(&run_start);
 #endif
-        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchKnn(massQ + vecdim * i, k);
+        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchKnn(massQ + vecdim * i, k, 1);
 #ifndef WIN32
         GetCurTime(&run_end);
         GetTime(&run_start, &run_end, &usr_t, &sys_t);
@@ -76,12 +55,14 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, Hierarchical
         std::priority_queue<std::pair<float, labeltype >> gt(answers[i]);
         total += gt.size();
         int tmp = recall(result, gt);
+        total_ratio += Ratio(result, gt);
         correct += tmp;
     }
     long double time_us_per_query = total_time / qsize;
     long double recall = 1.0f * correct / total;
+    long double dist_ratio =  total_ratio/ qsize;
 
-    cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " "<< endl;
+    cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " "<<dist_ratio<< endl;
     outer_recall = recall * 100;
     return;
 }
@@ -155,8 +136,8 @@ int main(int argc, char *argv[]) {
     }
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
-    sprintf(groundtruth_path, "%s%s_groundtruth.ivecs", source, dataset);
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube.log", K, dataset, dataset);
+    sprintf(groundtruth_path, "%s%s_next_groundtruth.ivecs", source, dataset);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-next.log", K, dataset, dataset);
     sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
@@ -165,10 +146,9 @@ int main(int argc, char *argv[]) {
 
     L2Space l2space(Q.d);
     auto *appr_alg = new HierarchicalNSWCube<float>(&l2space, index_path, false);
-    freopen(result_path, "w", stdout);
-    size_t k = G.d;
+    freopen(result_path, "a", stdout);
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;
-    get_gt(G.data, Q.data, appr_alg->max_elements_, Q.n, l2space, Q.d, answers, k, subk, *appr_alg);
+    get_gt(Q, X, G, answers, subk);
     test_vs_recall(Q.data, appr_alg->max_elements_, Q.n, *appr_alg, Q.d, answers, subk);
     return 0;
 }

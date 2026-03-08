@@ -1,74 +1,98 @@
 #!/bin/bash
-# Test script for CubeGraph index
+# Test script for CubeGraph with cube-aware indexing and search
 
-# Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
 cd "$PROJECT_ROOT"
 
 source set.sh
 
-# Use first dataset from list
 data=${datasets[0]}
-
-echo "========================================="
-echo "CubeGraph Index Test"
-echo "========================================="
 echo "Dataset: $data"
-echo "Store path: $store_path"
-echo "Result path: $result_path"
 
-# Create results directory
-mkdir -p ${result_path}/recall@20/${data}
-mkdir -p ${result_path}/recall@100/${data}
+DATA_DIR="${store_path}/${data}"
+RESULT_DIR="${result_path}/recall@20/${data}"
+
+mkdir -p "$RESULT_DIR"
+mkdir -p "$DATA_DIR"
 
 # Generate metadata if not exists
-if [ ! -f "${store_path}/${data}/${data}_metadata_uniform_2d.bin" ]; then
+if [ ! -f "${DATA_DIR}/${data}_metadata_uniform_2d.bin" ]; then
     echo "Generating metadata..."
     python3 scripts/generate_metadata.py \
-        --data ${store_path}/${data}/${data}_base.fvecs \
-        --output-dir ${store_path}/${data} \
+        --data ${DATA_DIR}/${data}_base.fvecs \
+        --output-dir ${DATA_DIR} \
         --attr-dim 2 \
         --distributions uniform
 fi
 
-# Test different ef values
-for ef in 50 100 200 500; do
-    echo ""
-    echo "========================================="
-    echo "Testing with ef=${ef}..."
-    echo "========================================="
+# Generate regular groundtruth (for recall comparison)
+if [ ! -f "${DATA_DIR}/${data}_groundtruth.ivecs" ]; then
+    echo "Generating groundtruth..."
+    python3 -c "
+import numpy as np
+import struct
 
-    # Run benchmark
-    ./build/src/bench_cube_index \
-        -d ${store_path}/${data}/${data}_base.fvecs \
-        -m ${store_path}/${data}/${data}_metadata_uniform_2d.bin \
-        -q ${store_path}/${data}/${data}_query.fvecs \
-        -o ${result_path}/${data}_cube_ef${ef}.index \
-        -a 2 \
-        -k 20 \
-        -e ${ef} 2>&1 | tee ${result_path}/recall@20/${data}/${data}-cube-ef${ef}.log
+def read_fvecs(path):
+    with open(path, 'rb') as f:
+        d = struct.unpack('i', f.read(4))[0]
+        f.seek(0)
+        vecs = []
+        while True:
+            b = f.read(4)
+            if not b: break
+            dim = struct.unpack('i', b)[0]
+            vecs.append(struct.unpack('f' * dim, f.read(4 * dim)))
+    return np.array(vecs, dtype=np.float32)
 
-    # Extract recall and QPS and save in required format
-    recall=$(grep "^Results:" -A 3 ${result_path}/recall@20/${data}/${data}-cube-ef${ef}.log 2>/dev/null | grep "Recall:" | awk '{print $2}' | tr -d '%')
-    qps=$(grep "^Results:" -A 3 ${result_path}/recall@20/${data}/${data}-cube-ef${ef}.log 2>/dev/null | grep "QPS:" | awk '{print $2}')
+base = read_fvecs('${DATA_DIR}/${data}_base.fvecs')
+query = read_fvecs('${DATA_DIR}/${data}_query.fvecs')
 
-    if [ -z "$recall" ]; then
-        recall="0"
-    fi
-    if [ -z "$qps" ]; then
-        qps="0"
-    fi
+# Compute brute-force KNN
+k = 100
+dist = np.sum((base - query[:, None])**2, axis=2)
+nn = np.argsort(dist, axis=1)[:, :k]
 
-    # Write in format: "recall Qps"
-    echo "${recall} ${qps}" > ${result_path}/recall@20/${data}/${data}-cube.log
+# Save as ivecs
+with open('${DATA_DIR}/${data}_groundtruth.ivecs', 'wb') as f:
+    for i in range(len(query)):
+        f.write(struct.pack('i', k))
+        for j in range(k):
+            f.write(struct.pack('i', int(nn[i, j])))
+print('Groundtruth saved')
+"
+fi
 
-    echo "  Result: recall=${recall}%, qps=${qps}"
-done
+# Generate cube assignments
+if [ ! -f "${DATA_DIR}/${data}_cube_id_base.bin" ]; then
+    echo "Generating cube assignments..."
+    python3 scripts/generate_cube_assignment.py \
+        --base ${DATA_DIR}/${data}_base.fvecs \
+        --query ${DATA_DIR}/${data}_query.fvecs \
+        --metadata ${DATA_DIR}/${data}_metadata_uniform_2d.bin \
+        --output-base ${DATA_DIR}/${data}_cube_id_base.bin \
+        --output-query ${DATA_DIR}/${data}_cube_id_query.bin \
+        --num-cubes 16
+fi
 
-echo ""
-echo "========================================="
-echo "Done! Results:"
-echo "========================================="
-cat ${result_path}/recall@20/${data}/${data}-cube.log
+# Generate cube-filtered groundtruth
+if [ ! -f "${DATA_DIR}/${data}_cube_groundtruth.ivecs" ]; then
+    echo "Generating cube-filtered groundtruth..."
+    python3 scripts/generate_cube_groundtruth.py \
+        --base ${DATA_DIR}/${data}_base.fvecs \
+        --query ${DATA_DIR}/${data}_query.fvecs \
+        --cube-base ${DATA_DIR}/${data}_cube_id_base.bin \
+        --cube-query ${DATA_DIR}/${data}_cube_id_query.bin \
+        --output ${DATA_DIR}/${data}_cube_groundtruth.ivecs \
+        --k 100
+fi
+
+# Build index with cube_id
+echo "Building index with cube_id..."
+./build/src/index_cube -d "$data" -s "${DATA_DIR}/" -t "${DATA_DIR}/${data}_metadata_uniform_2d.bin" -c 16
+
+# Search with cube-aware search
+echo "Searching with cube-aware search..."
+./build/src/search_cube -d "$data" -s "${DATA_DIR}/" -k 20 -m "${DATA_DIR}/${data}_metadata_uniform_2d.bin" -c 16
+
+echo "Done!"

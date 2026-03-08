@@ -1,6 +1,9 @@
 source set.sh
 
 bash mkdir.sh
+#
+#
+#bash tests/run_cube.sh
 
 #for data in "${datasets[@]}"; do
 #  echo "Indexing - ${data}"

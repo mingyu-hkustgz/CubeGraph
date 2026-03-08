@@ -88,6 +88,38 @@ bool isFileExists_ifstream(const char *name) {
     return f.good();
 }
 
+int recall(std::priority_queue<std::pair<float, hnswlib::labeltype >> result,
+           std::priority_queue<std::pair<float, hnswlib::labeltype >> gt) {
+    std::unordered_set<hnswlib::labeltype> g;
+    int ret = 0;
+    while (gt.size()) {
+        g.insert(gt.top().second);
+        gt.pop();
+    }
+    while (result.size()) {
+        if (g.find(result.top().second) != g.end()) {
+            ret++;
+        }
+        result.pop();
+    }
+    return ret;
+}
+
+double Ratio(std::priority_queue<std::pair<float, hnswlib::labeltype >> result,
+             std::priority_queue<std::pair<float, hnswlib::labeltype >> gt) {
+    double ratio = 0, count =0;
+    while (gt.size() && result.size() ) {
+        ratio += (result.top().first / gt.top().first);
+        gt.pop();
+        result.pop();
+        //std::cerr<<gt.top().second<<" "<<result.top().second<<std::endl;
+        //std::cerr<<((double)result.top().first/(double)gt.top().first)<<" "<<result.top().first<<" "<<gt.top().first<<std::endl;
+        count+=1.0;
+    }
+    ratio /= count;
+    return ratio;
+}
+
 
 
 typedef std::priority_queue<std::pair<float, hnswlib::labeltype>> ResultQueue;

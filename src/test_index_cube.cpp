@@ -3,6 +3,8 @@
 #include <queue>
 #include <getopt.h>
 #include <unordered_set>
+#include <vector>
+#include <cmath>
 
 #include "matrix.h"
 #include "utils.h"
@@ -62,12 +64,27 @@ int main(int argc, char * argv[]) {
     size_t N = X->n;
     size_t report = 50000;
     L2Space l2space(D);
-    auto* appr_alg = new HierarchicalNSWCube<float> (&l2space, N,2,2, HNSW_M, HNSW_efConstruction);
-    appr_alg->addPoint(X->data , 0);
+    auto* appr_alg = new HierarchicalNSWCube<float> (&l2space, N, 2, 2, 2, HNSW_M, HNSW_efConstruction);
+
+    // Add first point
+    appr_alg->addCubePoint(X->data, 0,0);
+    appr_alg->addCubePoint(X->data, 500000,1);
     unsigned check_tag = 1;
 #pragma omp parallel for schedule(dynamic, 144)
-    for(int i=1;i<N;i++){
-        appr_alg->addPoint(X->data + i * D, i);
+    for(int i = 1; i < 500000; i++){
+        appr_alg->addCubePoint(X->data + i * D, i, 0);
+#pragma omp critical
+        {
+            check_tag++;
+            if(check_tag % report == 0){
+                cerr << "Processing - " << check_tag << " / " << N << endl;
+            }
+        }
+    }
+
+#pragma omp parallel for schedule(dynamic, 144)
+    for(int i = 500001; i < N; i++){
+        appr_alg->addCubePoint(X->data + i * D, i, 1);
 #pragma omp critical
         {
             check_tag++;
@@ -78,5 +95,6 @@ int main(int argc, char * argv[]) {
     }
 
     appr_alg->saveIndex(index_path);
+    cout << "Index saved to: " << index_path << endl;
     return 0;
 }
