@@ -35,6 +35,7 @@ namespace hnswlib {
         size_t maxM0_{0};
         size_t ef_construction_{0};
         size_t ef_{ 0 };
+        size_t ef_cross{20};
 
         double mult_{0.0}, revSize_{0.0};
 
@@ -46,6 +47,9 @@ namespace hnswlib {
         std::vector<std::mutex> link_list_locks_;
         // Entry point per cube - replaces single enterpoint_node_
         std::vector<tableint> cube_entry_points_;
+
+        // Adjacent cube IDs for cross-cube edges
+        std::vector<std::vector<labeltype>> adjacent_cube_ids_;
 
         size_t size_links_level0_{0};
         size_t offsetLevel0_{0}, label_offset_{ 0 }, cube_offset_{ 0 }, offset_cross_level0_{0};
@@ -125,15 +129,18 @@ namespace hnswlib {
             update_probability_generator_.seed(random_seed + 1);
 
             size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
-            size_meta_per_element_ = sizeof(labeltype) + sizeof(labeltype) + Meta_dim_ * sizeof(metatype) ; // Label CubeID and Meta
             size_adja_per_element_ = Meta_dim_ * 2 * Cross_edge_counts_ * sizeof(tableint); // Each dim * 2 [cross count]
-            label_offset_ = size_links_level0_; // the label offset is also reset
+            size_meta_per_element_ = sizeof(labeltype) + sizeof(labeltype) + Meta_dim_ * sizeof(metatype) ; // Label CubeID and Meta
+
+            offset_cross_level0_ = size_links_level0_;
+            label_offset_ = size_links_level0_ +  size_adja_per_element_; // the label offset is also reset
             cube_offset_ = label_offset_ + sizeof(labeltype);
             meta_offset_level0_ = cube_offset_ + sizeof(labeltype);
-            offset_cross_level0_ = size_links_level0_ + size_meta_per_element_;
             offsetLevel0_ = 0;
+
+
             // we remove data size from level 0;
-            size_data_per_element_ = size_links_level0_ + size_meta_per_element_ + size_adja_per_element_;
+            size_data_per_element_ = size_links_level0_ + size_adja_per_element_ + size_meta_per_element_;
             data_level0_memory_ = (char *) malloc(max_elements_ * size_data_per_element_);
             if (data_level0_memory_ == nullptr)
                 throw std::runtime_error("Not enough memory");
@@ -205,8 +212,8 @@ namespace hnswlib {
         }
 
         // Get pointer to cube ID (similar to getExternalLabeLp for label)
-        inline labeltype *getExternalCubeIdPtr(tableint internal_id) const {
-            return (labeltype *) (data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_);
+        inline labeltype getCubeId(tableint internal_id) const {
+            return (labeltype ) *(data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_);
         }
 
         // Get pointer to metadata vector
@@ -217,11 +224,6 @@ namespace hnswlib {
         // Get pointer to cross-cube edges
         inline tableint *getCrossEdges(tableint internal_id) const {
             return (tableint *) (data_level0_memory_ + internal_id * size_data_per_element_ + offset_cross_level0_);
-        }
-
-        // Get size of cross-cube edges for an element
-        inline size_t getCrossEdgesSize() const {
-            return size_adja_per_element_;
         }
 
         // Set metadata for an element
@@ -237,13 +239,6 @@ namespace hnswlib {
         }
 
 
-        int getRandomLevel(double reverse_size) {
-//            std::uniform_real_distribution<double> distribution(0.0, 1.0);
-//            double r = -log(distribution(level_generator_)) * reverse_size;
-//            return (int) r;
-            return 0;
-        }
-
         size_t getMaxElements() {
             return max_elements_;
         }
@@ -255,6 +250,50 @@ namespace hnswlib {
         size_t getDeletedCount() {
             return num_deleted_;
         }
+
+        void addCrossCubelinks(labeltype internal_id) {
+            // Get the cube_id for the current node
+            labeltype cube_id = getExternalCubeId(internal_id);
+
+            // Get the adjacent cube IDs for this cube
+            if (cube_id >= adjacent_cube_ids_.size()) {
+                return;  // No adjacent cubes defined
+            }
+            const auto& adjacent_cubes = adjacent_cube_ids_[cube_id];
+
+            // Get the vector data for this node
+            char* data_point = getDataByInternalId(internal_id);
+
+            // Collect entry points from all adjacent cubes
+            std::vector<tableint> entry_points;
+            for (labeltype adj_cube_id : adjacent_cubes) {
+                entry_points.push_back(cube_entry_points_[adj_cube_id]);
+            }
+
+            size_t ef = ef_cross;
+            tableint* cross_edges = getCrossEdges(internal_id);
+            for (tableint ep_id : entry_points) {
+                if((signed)ep_id != -1){
+                    auto top_candidates = searchBaseLayerST(ep_id, data_point, ef);
+                    while (top_candidates.size() > Cross_edge_counts_) {
+                        top_candidates.pop();
+                    }
+                    auto count = 0;
+                    while (!top_candidates.empty()) {
+                        cross_edges[count] = top_candidates.top().second;
+                        top_candidates.pop();
+                        count++;
+                    }
+                }
+                cross_edges += Cross_edge_counts_;
+            }
+        }
+
+        // Set adjacent cube IDs for cross-cube edges
+        void setAdjacentCubeIds(const std::vector<std::vector<labeltype>>& adjacent_ids) {
+            adjacent_cube_ids_ = adjacent_ids;
+        }
+
 
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
         searchBaseLayer(tableint ep_id, const void *data_point) {
@@ -699,6 +738,18 @@ namespace hnswlib {
             writeBinaryPOD(output, mult_);
             writeBinaryPOD(output, ef_construction_);
 
+            // Save additional fields needed for searchCubeKnn
+            writeBinaryPOD(output, adjacent_cube_ids_.size());
+            for (const auto& adj_list : adjacent_cube_ids_) {
+                writeBinaryPOD(output, adj_list.size());
+                for (const auto& adj : adj_list) {
+                    writeBinaryPOD(output, adj);
+                }
+            }
+            writeBinaryPOD(output, Meta_dim_);
+            writeBinaryPOD(output, Cross_edge_counts_);
+            writeBinaryPOD(output, size_adja_per_element_);
+
             output.write(data_level0_memory_, cur_element_count * size_data_per_element_);
             output.close();
         }
@@ -737,7 +788,6 @@ namespace hnswlib {
                 tableint entry_node;
                 readBinaryPOD(input, entry_node);
                 cube_entry_points_[i] = entry_node;
-                std::cerr<<i<<" "<<entry_node<<std::endl;
             }
 
             readBinaryPOD(input, maxM_);
@@ -745,6 +795,22 @@ namespace hnswlib {
             readBinaryPOD(input, M_);
             readBinaryPOD(input, mult_);
             readBinaryPOD(input, ef_construction_);
+
+            // Load additional fields needed for searchCubeKnn
+            size_t adjacent_size;
+            readBinaryPOD(input, adjacent_size);
+            adjacent_cube_ids_.resize(adjacent_size);
+            for (size_t i = 0; i < adjacent_size; i++) {
+                size_t list_size;
+                readBinaryPOD(input, list_size);
+                adjacent_cube_ids_[i].resize(list_size);
+                for (size_t j = 0; j < list_size; j++) {
+                    readBinaryPOD(input, adjacent_cube_ids_[i][j]);
+                }
+            }
+            readBinaryPOD(input, Meta_dim_);
+            readBinaryPOD(input, Cross_edge_counts_);
+            readBinaryPOD(input, size_adja_per_element_);
 
             data_size_ = s->get_data_size();
             fstdistfunc_ = s->get_dist_func();
@@ -947,6 +1013,128 @@ namespace hnswlib {
                 top_candidates = searchBaseLayerST<false>(
                         currObj, query_data, std::max(ef_, k), isIdAllowed);
             }
+
+            while (top_candidates.size() > k) {
+                top_candidates.pop();
+            }
+            while (top_candidates.size() > 0) {
+                std::pair<dist_t, tableint> rez = top_candidates.top();
+                result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+                top_candidates.pop();
+            }
+            return result;
+        }
+
+
+        // Search with explicit cube ID
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchCubeKnn(const void *query_data, size_t k, std::vector<tableint> &cube_list, BaseFilterFunctor* isIdAllowed = nullptr) {
+            std::priority_queue<std::pair<dist_t, labeltype >> result;
+            if (cur_element_count == 0) return result;
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+            std::unordered_map<tableint, uint64_t> neighbor_mp;
+            for(auto cube:cube_list){
+                neighbor_mp[cube] = 1ll;
+            }
+            for(auto cube:cube_list){
+                for(auto next_cube:adjacent_cube_ids_[cube]){
+                    auto tmp_neighbor_bit = neighbor_mp[cube];
+                    tmp_neighbor_bit <<= 1;
+                    if(neighbor_mp[next_cube]){
+                        tmp_neighbor_bit |= 1;
+                    }
+                    neighbor_mp[cube] = tmp_neighbor_bit;
+                }
+            }
+            uint32_t cross_size = Meta_dim_ * 2 * Cross_edge_counts_;
+
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+            dist_t lowerBound = std::numeric_limits<dist_t>::max();;
+            // Get entry point for the specified cube
+            for(auto cube_id:cube_list){
+                auto ep_id = cube_entry_points_[cube_id];
+                char* ep_data = getDataByInternalId(ep_id);
+                dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
+                if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id)))) {
+                    top_candidates.emplace(dist, ep_id);
+                    lowerBound = std::min(lowerBound, dist);
+                    candidate_set.emplace(-dist, ep_id);
+                } else {
+                    candidate_set.emplace(-dist, ep_id);
+                }
+                visited_array[ep_id] = visited_array_tag;
+            }
+
+            while (!candidate_set.empty()) {
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                dist_t candidate_dist = -current_node_pair.first;
+
+                if (candidate_dist > lowerBound && top_candidates.size() == ef_) {
+                    break;
+                }
+                candidate_set.pop();
+
+                tableint current_node_id = current_node_pair.second;
+                tableint cube_id = getCubeId(current_node_id);
+                int *data = (int *) get_linklist0(current_node_id);
+                size_t size = getListCount((linklistsizeint*)data);
+                int *adja = (int *) getCrossEdges(current_node_id);
+
+#ifdef USE_SSE
+                _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
+                _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
+                _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
+#endif
+
+                for (size_t j = 1; j <= size + cross_size; j++) {
+                    int candidate_id;
+                    if(j <= size)
+                        candidate_id = *(data + j);
+                    else {
+                        auto l = j-size;
+                        if( (1 << l/Cross_edge_counts_) & neighbor_mp[cube_id])
+                            candidate_id = *(adja + l);
+                        else
+                            continue;
+                    }
+                    if (candidate_id == 0) continue;
+#ifdef USE_SSE
+                    _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
+#endif
+                    if (!(visited_array[candidate_id] == visited_array_tag)) {
+                        visited_array[candidate_id] = visited_array_tag;
+
+                        char *currObj1 = (getDataByInternalId(candidate_id));
+                        dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                        if (top_candidates.size() < ef_ || lowerBound > dist) {
+                            candidate_set.emplace(-dist, candidate_id);
+#ifdef USE_SSE
+                            _mm_prefetch(data_level0_memory_ + candidate_set.top().second * size_data_per_element_ +
+                                         offsetLevel0_,  ///////////
+                                         _MM_HINT_T0);  ////////////////////////
+#endif
+
+                            if (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getMetadata(candidate_id)))) {
+                                top_candidates.emplace(dist, candidate_id);
+                            }
+
+                            if (top_candidates.size() > ef_) {
+                                top_candidates.pop();
+                            }
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            visited_list_pool_->releaseVisitedList(vl);
 
             while (top_candidates.size() > k) {
                 top_candidates.pop();

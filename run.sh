@@ -22,10 +22,27 @@ bash mkdir.sh
 #done
 
 
+#for data in "${datasets[@]}"; do
+#  echo "Indexing - ${data}"
+#
+#  ./build/src/index_cube -d ${data} -s "./DATA/${data}/"
+#
+#done
+#
+#for K in {20,100}; do
+#  for data in "${datasets[@]}"; do
+#    echo "Searching - ${data}"
+#
+#    ./build/src/search_cube -d ${data} -s "./DATA/${data}/" -k ${K}
+#
+#  done
+#done
+
+
 for data in "${datasets[@]}"; do
   echo "Indexing - ${data}"
 
-  ./build/src/index_cube -d ${data} -s "./DATA/${data}/"
+  ./build/src/link_adjacent_cube -d ${data} -s "./DATA/${data}/"
 
 done
 
@@ -33,7 +50,7 @@ for K in {20,100}; do
   for data in "${datasets[@]}"; do
     echo "Searching - ${data}"
 
-    ./build/src/search_cube -d ${data} -s "./DATA/${data}/" -k ${K}
+    ./build/src/cross_cube_search -d ${data} -s "./DATA/${data}/" -k ${K}
 
   done
 done
