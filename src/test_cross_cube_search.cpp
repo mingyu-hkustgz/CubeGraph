@@ -17,8 +17,28 @@ using namespace hnswlib;
 
 const int MAXK = 100;
 
+
 int efSearch = 100;
 double outer_recall = 0;
+
+class ContainLabelFilter : public hnswlib::BaseFilterFunctor {
+public:
+
+    unsigned Thresh = 0;
+
+    ContainLabelFilter(unsigned x) {
+        Thresh = x;
+    }
+
+    bool operator()(hnswlib::labeltype id) override {
+        return  id > Thresh;
+    }
+
+    bool operator()(hnswlib::metatype *cur) override {
+        return  cur[0] >= (float) Thresh;
+    }
+
+};
 
 static void get_gt(Matrix<float> &Q, Matrix<float> &X, Matrix<unsigned > G, vector<std::priority_queue<std::pair<float, labeltype >>> &answers,
                    size_t subk) {
@@ -38,15 +58,17 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, Hierarchical
     long double total_time = 0;
     long double total_ratio = 0;
     size_t dist_count = 0;
-
-    std::vector<tableint> cubelist={0,1};
+    std::vector<tableint> cubelist;
+    for(int i=0;i<CUBE;i++) cubelist.push_back(i);
     for (int i = 0; i < qsize; i++) {
 #ifndef WIN32
         float sys_t, usr_t, usr_t_sum = 0;
         struct rusage run_start, run_end;
         GetCurTime(&run_start);
 #endif
-        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchCubeKnn(massQ + vecdim * i, k, cubelist);
+        ContainLabelFilter contain_filter(500000);
+
+        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchCubeKnn(massQ + vecdim * i, k, cubelist, &contain_filter);
 #ifndef WIN32
         GetCurTime(&run_end);
         GetTime(&run_start, &run_end, &usr_t, &sys_t);
@@ -136,8 +158,8 @@ int main(int argc, char *argv[]) {
     }
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
-    sprintf(groundtruth_path, "%s%s_groundtruth.ivecs", source, dataset);
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-merge.log", K, dataset, dataset);
+    sprintf(groundtruth_path, "%s%s_next_groundtruth.ivecs", source, dataset);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-next-merge%d.log", K, dataset, dataset, CUBE);
     sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);

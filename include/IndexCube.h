@@ -1,34 +1,25 @@
 #pragma once
 
-#include <vector>
-#include <queue>
-#include <utility>
-#include <cmath>
-#include <algorithm>
-#include <fstream>
-#include <memory>
-#include <omp.h>
-#include <unordered_map>
-#include <limits>
-#include <cstdio>  // for remove
-
-
 #include "hnswlib/hnswlib.h"
 #include "hnsw-cube.h"
 #include "matrix.h"
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <fstream>
+#include <queue>
+#include <omp.h>
 
-#define HNSW_CUBE_M 32  // Internal edges per node
-#define HNSW_CUBE_efConstruction 200  // Reduced for faster build
-#define CUBE_THRESHOLD 5000  // Minimum vectors per cube (larger for faster build)
+#define MAX_DIM 16
 
 // Multi-dimensional bounding box
-struct CubeBoundingBox {
+struct BoundingBox {
     std::vector<float> min_bounds;
     std::vector<float> max_bounds;
 
-    CubeBoundingBox() {}
+    BoundingBox() {}
 
-    CubeBoundingBox(size_t dim) : min_bounds(dim), max_bounds(dim) {}
+    BoundingBox(size_t dim) : min_bounds(dim), max_bounds(dim) {}
 
     bool contains(const std::vector<float>& point) const {
         for (size_t i = 0; i < min_bounds.size(); i++) {
@@ -38,7 +29,7 @@ struct CubeBoundingBox {
         return true;
     }
 
-    bool overlaps(const CubeBoundingBox& other) const {
+    bool overlaps(const BoundingBox& other) const {
         for (size_t i = 0; i < min_bounds.size(); i++) {
             if (max_bounds[i] < other.min_bounds[i] || min_bounds[i] > other.max_bounds[i])
                 return false;
@@ -46,854 +37,601 @@ struct CubeBoundingBox {
         return true;
     }
 
-    // Check if this cube is adjacent to another cube
-    bool is_adjacent(const CubeBoundingBox& other, float epsilon = 1e-6) const {
-        int touching_dims = 0;
+    float volume() const {
+        float vol = 1.0f;
         for (size_t i = 0; i < min_bounds.size(); i++) {
-            if (std::abs(max_bounds[i] - other.min_bounds[i]) < epsilon ||
-                std::abs(min_bounds[i] - other.max_bounds[i]) < epsilon) {
-                touching_dims++;
-            }
+            vol *= (max_bounds[i] - min_bounds[i]);
         }
-        // Adjacent if touching in exactly one dimension and overlapping in others
-        return touching_dims >= 1;
-    }
-
-    // Get direction to another cube (for 2D: 0=left, 1=right, 2=bottom, 3=top)
-    int get_direction_to(const CubeBoundingBox& other, float epsilon = 1e-6) const {
-        for (size_t i = 0; i < min_bounds.size(); i++) {
-            if (std::abs(max_bounds[i] - other.min_bounds[i]) < epsilon) {
-                return 2 * i + 1;  // Right/top/front direction
-            }
-            if (std::abs(min_bounds[i] - other.max_bounds[i]) < epsilon) {
-                return 2 * i;  // Left/bottom/back direction
-            }
-        }
-        return -1;
+        return vol;
     }
 };
 
-// Cube query structure
-struct CubeQuery {
-    CubeBoundingBox bbox;
-    std::vector<float> center;
-    float radius;
-    bool is_radius_query;
-    float* data_;
-
-    CubeQuery() : radius(0.0f), is_radius_query(false), data_(nullptr) {}
-
-    CubeQuery(const CubeBoundingBox& box, float* data)
-        : bbox(box), radius(0.0f), is_radius_query(false), data_(data) {}
-
-    CubeQuery(const std::vector<float>& c, float r, float* data)
-        : center(c), radius(r), is_radius_query(true), data_(data) {
-        size_t dim = c.size();
-        bbox = CubeBoundingBox(dim);
-        for (size_t i = 0; i < dim; i++) {
-            bbox.min_bounds[i] = c[i] - r;
-            bbox.max_bounds[i] = c[i] + r;
-        }
-    }
+// Layer selection strategy
+enum class LayerSelectionStrategy {
+    RANGE_SIZE,      // Match filter range size to cube size
+    EXPLICIT,        // User specifies layer_id directly
+    SELECTIVITY      // Based on filter selectivity (volume ratio)
 };
 
-// Cube filter for filtering points based on metadata
-class CubeFilter : public hnswlib::BaseFilterFunctor {
-public:
-    const std::vector<std::vector<float>>* metadata_;
-    CubeQuery query_;
-
-    CubeFilter(const std::vector<std::vector<float>>* metadata, const CubeQuery& query)
-        : metadata_(metadata), query_(query) {}
-
-    bool operator()(hnswlib::labeltype id) override {
-        if (id >= metadata_->size()) return false;
-
-        const auto& point = (*metadata_)[id];
-
-        if (query_.is_radius_query) {
-            float dist_sq = 0.0f;
-            for (size_t i = 0; i < point.size(); i++) {
-                float diff = point[i] - query_.center[i];
-                dist_sq += diff * diff;
-            }
-            return dist_sq <= (query_.radius * query_.radius);
-        } else {
-            return query_.bbox.contains(point);
-        }
-    }
-};
-
-// Cube node in hierarchical structure
-class CubeNode {
-public:
-    CubeBoundingBox bbox;
-    std::vector<hnswlib::labeltype> point_ids;
-    hnswlib::HierarchicalNSWCube<float>* index;
-    std::vector<CubeNode*> children;
-    std::vector<CubeNode*> neighbors;  // Adjacent cubes at same level
-    int level;
-    int cube_id;  // Unique ID for this cube (linear index in grid)
-    std::vector<int> grid_position;  // Position in the grid (for 2D: [i,j], for 3D: [i,j,k])
-    std::vector<int> grid_size;  // Size of the grid at this level (for each dimension)
-
-    CubeNode() : index(nullptr), level(0), cube_id(-1) {}
-
-    ~CubeNode() {
-        if (index) delete index;
-        for (auto child : children) {
-            if (child) delete child;
-        }
-    }
-
-    bool is_leaf() const {
-        return children.empty();
-    }
-
-    // Compute linear index from grid position
-    int compute_linear_index() const {
-        if (grid_position.empty() || grid_size.empty()) return -1;
-        int idx = 0;
-        int multiplier = 1;
-        for (size_t d = 0; d < grid_position.size(); d++) {
-            idx += grid_position[d] * multiplier;
-            multiplier *= grid_size[d];
-        }
-        return idx;
-    }
-
-    // Get neighbor cube ID in a specific direction
-    // direction: 0=negative, 1=positive for each dimension
-    // For 2D: 0=left, 1=right, 2=bottom, 3=top
-    // For 3D: 0=left, 1=right, 2=bottom, 3=top, 4=back, 5=front
-    // Returns linear index based on grid position
-    int get_neighbor_id_in_direction(int dir) const {
-        if (grid_position.empty() || grid_size.empty()) return -1;
-
-        int dim = dir / 2;  // Which dimension (0=dim0_negative, 1=dim0_positive, 2=dim1_negative, ...)
-        int sign = dir % 2;  // 0 = negative direction, 1 = positive direction
-
-        if (dim >= static_cast<int>(grid_position.size())) return -1;
-
-        int new_pos = grid_position[dim] + (sign == 0 ? -1 : 1);
-
-        // Check bounds
-        if (new_pos < 0 || new_pos >= grid_size[dim]) return -1;
-
-        // Compute neighbor's linear index using row-major order
-        int neighbor_id = 0;
-        int multiplier = 1;
-        for (size_t d = 0; d < grid_position.size(); d++) {
-            int pos = grid_position[d];
-            if (d == static_cast<size_t>(dim)) pos = new_pos;
-            neighbor_id += pos * multiplier;
-            multiplier *= grid_size[d];
-        }
-
-        return neighbor_id;
-    }
-};
-
-// Main cube-based index class
 class IndexCube {
+private:
+    // Configuration for a single layer
+    struct LayerConfig {
+        size_t layer_id;                    // 0, 1, 2, ...
+        size_t cubes_per_dim;               // 2^(layer_id+1)
+        size_t total_cubes;                 // (cubes_per_dim)^attr_dim
+        float cube_width[MAX_DIM];          // Cube size per dimension
+        hnswlib::HierarchicalNSWCube<float>* hnsw_index;
+        std::vector<std::vector<hnswlib::labeltype>> adjacent_cubes;
+        BoundingBox global_bbox;
+    };
+
+    std::vector<LayerConfig> layers_;
+    std::vector<std::vector<float>> metadata_;
+    BoundingBox global_bbox_;
+    size_t attr_dim_, vec_dim_, num_vectors_, num_layers_;
+    size_t M_, ef_construction_, cross_edge_count_;
+    hnswlib::SpaceInterface<float>* space_;
+    static char* static_base_data_;
+    Matrix<float>* base_vectors_;  // Keep base vectors alive
+
 public:
-    IndexCube() : attr_dim_(0), vec_dim_(0), num_vectors_(0), root_(nullptr) {}
-
-    IndexCube(size_t attr_dim, size_t vec_dim)
-        : attr_dim_(attr_dim), vec_dim_(vec_dim), num_vectors_(0), root_(nullptr) {}
-
-    ~IndexCube() {
-        if (root_) delete root_;
+    // Constructor
+    IndexCube(hnswlib::SpaceInterface<float>* space,
+              size_t vec_dim,
+              size_t attr_dim,
+              size_t num_layers = 3,
+              size_t M = 16,
+              size_t ef_construction = 200,
+              size_t cross_edge_count = 2)
+        : space_(space),
+          vec_dim_(vec_dim),
+          attr_dim_(attr_dim),
+          num_layers_(num_layers),
+          M_(M),
+          ef_construction_(ef_construction),
+          cross_edge_count_(cross_edge_count),
+          num_vectors_(0),
+          base_vectors_(nullptr) {
+        if (attr_dim > MAX_DIM) {
+            throw std::runtime_error("attr_dim exceeds MAX_DIM");
+        }
+        global_bbox_ = BoundingBox(attr_dim);
     }
 
-    // Build hierarchical cube index
-    void build_index(const char* data_path, const char* metadata_path, const char* output_path) {
-        // Load vector data
-        Matrix<float>* X = new Matrix<float>(const_cast<char*>(data_path));
-        vec_dim_ = X->d;
-        num_vectors_ = X->n;
-        hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char*)X->data;
+    // Destructor
+    ~IndexCube() {
+        for (auto& layer : layers_) {
+            if (layer.hnsw_index != nullptr) {
+                delete layer.hnsw_index;
+            }
+        }
+        if (base_vectors_ != nullptr) {
+            delete base_vectors_;
+        }
+    }
 
-        // Load metadata
-        load_metadata(metadata_path);
+    // Load metadata from binary file
+    void load_metadata(const std::string& metadata_file) {
+        std::ifstream in(metadata_file, std::ios::binary);
+        if (!in.is_open()) {
+            throw std::runtime_error("Cannot open metadata file: " + metadata_file);
+        }
 
-        std::cout << "Building cube index..." << std::endl;
-        std::cout << "  Vectors: " << num_vectors_ << std::endl;
-        std::cout << "  Vector dim: " << vec_dim_ << std::endl;
-        std::cout << "  Attribute dim: " << attr_dim_ << std::endl;
+        size_t n, d;
+        in.read(reinterpret_cast<char*>(&n), sizeof(size_t));
+        in.read(reinterpret_cast<char*>(&d), sizeof(size_t));
 
-        // Compute global bounding box
-        CubeBoundingBox global_bbox(attr_dim_);
-        for (size_t i = 0; i < attr_dim_; i++) {
-            global_bbox.min_bounds[i] = std::numeric_limits<float>::max();
-            global_bbox.max_bounds[i] = std::numeric_limits<float>::lowest();
+        if (d != attr_dim_) {
+            throw std::runtime_error("Metadata dimension mismatch");
+        }
+
+        num_vectors_ = n;
+        metadata_.resize(n, std::vector<float>(d));
+
+        for (size_t i = 0; i < n; i++) {
+            in.read(reinterpret_cast<char*>(metadata_[i].data()), d * sizeof(float));
+        }
+
+        in.close();
+    }
+
+    // Compute global bounding box from metadata
+    void compute_global_bbox() {
+        if (metadata_.empty()) {
+            throw std::runtime_error("Metadata not loaded");
+        }
+
+        for (size_t d = 0; d < attr_dim_; d++) {
+            global_bbox_.min_bounds[d] = std::numeric_limits<float>::max();
+            global_bbox_.max_bounds[d] = std::numeric_limits<float>::lowest();
         }
 
         for (const auto& point : metadata_) {
-            for (size_t i = 0; i < attr_dim_; i++) {
-                global_bbox.min_bounds[i] = std::min(global_bbox.min_bounds[i], point[i]);
-                global_bbox.max_bounds[i] = std::max(global_bbox.max_bounds[i], point[i]);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                global_bbox_.min_bounds[d] = std::min(global_bbox_.min_bounds[d], point[d]);
+                global_bbox_.max_bounds[d] = std::max(global_bbox_.max_bounds[d], point[d]);
             }
         }
 
-        // Build hierarchical cube structure
-        std::vector<hnswlib::labeltype> all_ids(num_vectors_);
-        for (size_t i = 0; i < num_vectors_; i++) {
-            all_ids[i] = i;
+        // Add small epsilon to avoid boundary issues
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float range = global_bbox_.max_bounds[d] - global_bbox_.min_bounds[d];
+            float epsilon = range * 1e-6f;
+            global_bbox_.min_bounds[d] -= epsilon;
+            global_bbox_.max_bounds[d] += epsilon;
         }
-
-        root_ = build_cube_recursive(global_bbox, all_ids, 0, {}, {});
-
-        // Build cross-cube edges
-        std::cout << "Building cross-cube edges..." << std::endl;
-        build_cross_cube_connections(root_);
-
-        // Save index
-        if (output_path) {
-            save_index(output_path);
-        }
-
-        std::cout << "Cube index built successfully!" << std::endl;
     }
 
-    // Search with cube-based filtering
-    std::priority_queue<std::pair<float, hnswlib::labeltype>>
-    search(const float* query_vec, const CubeQuery& query_filter, size_t k) {
-        if (!root_) {
-            return std::priority_queue<std::pair<float, hnswlib::labeltype>>();
+    // Compute cube ID from metadata coordinates for a specific layer
+    size_t compute_cube_id(const std::vector<float>& metadata, const LayerConfig& layer) const {
+        size_t cube_id = 0;
+        size_t multiplier = 1;
+
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float normalized = (metadata[d] - layer.global_bbox.min_bounds[d]) / layer.cube_width[d];
+            size_t cube_idx = static_cast<size_t>(normalized);
+            // Clamp to valid range
+            cube_idx = std::min(cube_idx, layer.cubes_per_dim - 1);
+            cube_id += cube_idx * multiplier;
+            multiplier *= layer.cubes_per_dim;
         }
 
-        // Find cubes that overlap with the query filter
-        std::vector<CubeNode*> overlapping_cubes;
-        find_overlapping_cubes(root_, query_filter.bbox, overlapping_cubes);
+        return cube_id;
+    }
 
-        std::cout << "Found " << overlapping_cubes.size() << " overlapping cubes" << std::endl;
+    // Decode cube ID to multi-dimensional coordinates
+    void decode_cube_id(size_t cube_id, const LayerConfig& layer, size_t* coords) const {
+        for (size_t d = 0; d < attr_dim_; d++) {
+            coords[d] = cube_id % layer.cubes_per_dim;
+            cube_id /= layer.cubes_per_dim;
+        }
+    }
 
-        if (overlapping_cubes.empty()) {
-            return std::priority_queue<std::pair<float, hnswlib::labeltype>>();
+    // Encode multi-dimensional coordinates to cube ID
+    size_t encode_cube_id(const size_t* coords, const LayerConfig& layer) const {
+        size_t cube_id = 0;
+        size_t multiplier = 1;
+
+        for (size_t d = 0; d < attr_dim_; d++) {
+            cube_id += coords[d] * multiplier;
+            multiplier *= layer.cubes_per_dim;
         }
 
-        // Create filter functor
-        CubeFilter filter(&metadata_, query_filter);
+        return cube_id;
+    }
 
-        // Merge results from all overlapping cubes
-        std::priority_queue<std::pair<float, hnswlib::labeltype>> merged_results;
+    // Build adjacency list for a layer (2*d face-adjacent neighbors)
+    void build_adjacency_list(LayerConfig& layer) {
+        layer.adjacent_cubes.resize(layer.total_cubes);
 
-        for (auto cube : overlapping_cubes) {
-            if (cube->index == nullptr || cube->index->cur_element_count == 0) {
-                continue;
+        for (size_t cube_id = 0; cube_id < layer.total_cubes; cube_id++) {
+            size_t coords[MAX_DIM];
+            decode_cube_id(cube_id, layer, coords);
+
+            // For each dimension, add neighbors at coords[d]±1
+            for (size_t d = 0; d < attr_dim_; d++) {
+                // Neighbor at coords[d]-1
+                if (coords[d] > 0) {
+                    size_t neighbor_coords[MAX_DIM];
+                    std::copy(coords, coords + attr_dim_, neighbor_coords);
+                    neighbor_coords[d]--;
+                    size_t neighbor_id = encode_cube_id(neighbor_coords, layer);
+                    layer.adjacent_cubes[cube_id].push_back(neighbor_id);
+                }
+
+                // Neighbor at coords[d]+1
+                if (coords[d] + 1 < layer.cubes_per_dim) {
+                    size_t neighbor_coords[MAX_DIM];
+                    std::copy(coords, coords + attr_dim_, neighbor_coords);
+                    neighbor_coords[d]++;
+                    size_t neighbor_id = encode_cube_id(neighbor_coords, layer);
+                    layer.adjacent_cubes[cube_id].push_back(neighbor_id);
+                }
             }
-
-            // Search in this cube with cross-cube edges
-            auto results = cube->index->searchKnn(query_vec, k, &filter);
-
-            // Merge results
-            while (!results.empty()) {
-                merged_results.push(results.top());
-                results.pop();
-            }
         }
-
-        // Keep only top k
-        std::priority_queue<std::pair<float, hnswlib::labeltype>> final_results;
-        std::vector<std::pair<float, hnswlib::labeltype>> temp;
-
-        while (!merged_results.empty()) {
-            temp.push_back(merged_results.top());
-            merged_results.pop();
-        }
-
-        std::sort(temp.begin(), temp.end());
-        for (size_t i = 0; i < std::min(k, temp.size()); i++) {
-            final_results.push(temp[i]);
-        }
-
-        return final_results;
     }
 
-private:
-    size_t attr_dim_;
-    size_t vec_dim_;
-    size_t num_vectors_;
-    CubeNode* root_;
-    std::vector<std::vector<float>> metadata_;
-
-    // Load metadata from binary file
-    void load_metadata(const char* metadata_path) {
-        std::ifstream fin(metadata_path, std::ios::binary);
-        if (!fin.is_open()) {
-            throw std::runtime_error("Cannot open metadata file");
+    // Build a single layer
+    void build_layer(size_t layer_id, char* base_data) {
+        LayerConfig layer;
+        layer.layer_id = layer_id;
+        layer.cubes_per_dim = 1 << (layer_id + 1);  // 2^(layer_id+1)
+        layer.total_cubes = 1;
+        for (size_t d = 0; d < attr_dim_; d++) {
+            layer.total_cubes *= layer.cubes_per_dim;
         }
 
-        size_t n, d;
-        fin.read((char*)&n, sizeof(size_t));
-        fin.read((char*)&d, sizeof(size_t));
-
-        if (n != num_vectors_) {
-            throw std::runtime_error("Metadata size mismatch");
+        // Compute cube widths
+        layer.global_bbox = global_bbox_;
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float range = global_bbox_.max_bounds[d] - global_bbox_.min_bounds[d];
+            layer.cube_width[d] = range / layer.cubes_per_dim;
         }
 
-        attr_dim_ = d;
-        metadata_.resize(n);
-
-        for (size_t i = 0; i < n; i++) {
-            metadata_[i].resize(d);
-            fin.read((char*)metadata_[i].data(), d * sizeof(float));
-        }
-
-        fin.close();
-    }
-
-    // Recursively build cube structure
-    CubeNode* build_cube_recursive(
-            const CubeBoundingBox& bbox,
-            const std::vector<hnswlib::labeltype>& point_ids,
-            int level,
-            const std::vector<int>& grid_pos = {},
-            const std::vector<int>& grid_sz = {}) {
-
-        CubeNode* node = new CubeNode();
-        node->bbox = bbox;
-        node->point_ids = point_ids;
-        node->level = level;
-        node->grid_position = grid_pos;
-        node->grid_size = grid_sz;
-        node->cube_id = node->compute_linear_index();  // Use linear index as cube_id
-
-        // If few enough points, create leaf cube with HNSW index
-        if (point_ids.size() <= CUBE_THRESHOLD) {
-            build_leaf_cube(node);
-            return node;
-        }
-
-        // Otherwise, subdivide into 2^attr_dim_ children
-        subdivide_cube(node, grid_pos, grid_sz);
-
-        return node;
-    }
-
-    // Build HNSW index for a leaf cube
-    void build_leaf_cube(CubeNode* node) {
-        if (node->point_ids.empty()) {
-            return;
-        }
-
-        auto l2space = new hnswlib::L2Space(vec_dim_);
-        // M = 32 internal edges
-        // M_cross = 16 total (will be distributed as M/(2*d) per direction)
-        node->index = new hnswlib::HierarchicalNSWCube<float>(
-            l2space,
-            node->point_ids.size(),
-            HNSW_CUBE_M,  // M = 32 internal edges
-            HNSW_CUBE_efConstruction,
-            100,
+        // Create HNSW-CUBE index
+        layer.hnsw_index = new hnswlib::HierarchicalNSWCube<float>(
+            space_,
+            num_vectors_,
             attr_dim_,
-            16  // M_cross = 16 total (distributed across 2*d directions)
+            layer.total_cubes,
+            cross_edge_count_,
+            M_,
+            ef_construction_
         );
 
-        // Add points to index
-#pragma omp parallel for
-        for (size_t i = 0; i < node->point_ids.size(); i++) {
-            hnswlib::labeltype label = node->point_ids[i];
-            node->index->addPoint(
-                hnswlib::HierarchicalNSWCube<float>::static_base_data_ + label * vec_dim_ * sizeof(float),
-                label
-            );
-        }
-    }
-
-    // Subdivide cube into 2^attr_dim_ children
-    void subdivide_cube(CubeNode* node, const std::vector<int>& parent_grid_pos, const std::vector<int>& parent_grid_sz) {
-        size_t num_children = 1 << attr_dim_;  // 2^attr_dim_
-        node->children.resize(num_children, nullptr);
-
-        // Compute midpoints
-        std::vector<float> midpoints(attr_dim_);
-        for (size_t i = 0; i < attr_dim_; i++) {
-            midpoints[i] = (node->bbox.min_bounds[i] + node->bbox.max_bounds[i]) / 2.0f;
-        }
-
-        // Calculate child grid size (double the parent in each dimension)
-        std::vector<int> child_grid_sz(attr_dim_, 2);
-        if (!parent_grid_sz.empty()) {
-            for (size_t i = 0; i < attr_dim_; i++) {
-                child_grid_sz[i] = parent_grid_sz[i] * 2;
-            }
-        }
-
-        // Create child bounding boxes and assign points
-        std::vector<std::vector<hnswlib::labeltype>> child_points(num_children);
-
-        for (auto id : node->point_ids) {
-            const auto& point = metadata_[id];
-
-            // Determine which child this point belongs to
-            size_t child_idx = 0;
-            for (size_t i = 0; i < attr_dim_; i++) {
-                if (point[i] >= midpoints[i]) {
-                    child_idx |= (1 << i);
-                }
-            }
-
-            child_points[child_idx].push_back(id);
-        }
-
-        // Create children with grid positions
-        for (size_t i = 0; i < num_children; i++) {
-            if (child_points[i].empty()) {
-                continue;
-            }
-
-            // Compute child's grid position
-            std::vector<int> child_grid_pos = parent_grid_pos;
-            for (size_t d = 0; d < attr_dim_; d++) {
-                int bit = (i >> d) & 1;  // 0 or 1
-                // Position doubles in each dimension and adds the bit
-                int base = parent_grid_pos.empty() ? 0 : parent_grid_pos[d] * 2;
-                child_grid_pos.push_back(base + bit);
-            }
-
-            CubeBoundingBox child_bbox(attr_dim_);
-            for (size_t d = 0; d < attr_dim_; d++) {
-                if (i & (1 << d)) {
-                    child_bbox.min_bounds[d] = midpoints[d];
-                    child_bbox.max_bounds[d] = node->bbox.max_bounds[d];
-                } else {
-                    child_bbox.min_bounds[d] = node->bbox.min_bounds[d];
-                    child_bbox.max_bounds[d] = midpoints[d];
-                }
-            }
-
-            node->children[i] = build_cube_recursive(child_bbox, child_points[i], node->level + 1, child_grid_pos, child_grid_sz);
-        }
-    }
-
-    // Build cross-cube connections using grid-based neighbor lookup (O(n) instead of O(n²))
-    void build_cross_cube_connections(CubeNode* root) {
-        // Collect all leaf cubes
-        std::vector<CubeNode*> leaf_cubes;
-        collect_leaf_cubes(root, leaf_cubes);
-
-        std::cout << "  Total leaf cubes: " << leaf_cubes.size() << std::endl;
-
-        // Build a map from cube_id to cube pointer for O(1) lookup
-        std::unordered_map<int, CubeNode*> cube_by_id;
-        for (auto cube : leaf_cubes) {
-            cube_by_id[cube->cube_id] = cube;
-        }
-
-        // For each cube, check 2*attr_dim_ directions
-        int num_directions = 2 * attr_dim_;
-        for (auto cube : leaf_cubes) {
-            for (int dir = 0; dir < num_directions; dir++) {
-                int neighbor_id = cube->get_neighbor_id_in_direction(dir);
-
-                if (neighbor_id >= 0) {
-                    auto it = cube_by_id.find(neighbor_id);
-                    if (it != cube_by_id.end() && it->second != cube) {
-                        cube->neighbors.push_back(it->second);
-                    }
-                }
-            }
-        }
-
-        // Count total neighbor connections
-        size_t total_neighbors = 0;
-        for (auto cube : leaf_cubes) {
-            total_neighbors += cube->neighbors.size();
-        }
-        std::cout << "  Total neighbor connections: " << (total_neighbors / 2) << " (bidirectional)" << std::endl;
-
-        std::cout << "  Building cross-cube edges..." << std::endl;
-
-        // Build cross-cube edges - sequential to avoid race conditions
-        for (size_t i = 0; i < leaf_cubes.size(); i++) {
-            auto cube = leaf_cubes[i];
-            if (cube->index == nullptr) continue;
-
-            // Add neighbor connections
-            for (auto neighbor : cube->neighbors) {
-                if (neighbor->index == nullptr) continue;
-
-                int direction = cube->bbox.get_direction_to(neighbor->bbox);
-                cube->index->add_neighbor_cube(neighbor->cube_id, direction, neighbor->index);
-            }
-
-            // Build the actual cross-cube edges
-            cube->index->build_cross_cube_edges();
-
-            if (i % 10 == 0) {
-                std::cout << "    Processed " << i << "/" << leaf_cubes.size() << " cubes" << std::endl;
-            }
-        }
-
-        std::cout << "  Cross-cube edges built" << std::endl;
-    }
-
-    // Collect all leaf cubes
-    void collect_leaf_cubes(CubeNode* node, std::vector<CubeNode*>& leaves) {
-        if (node == nullptr) return;
-
-        if (node->is_leaf()) {
-            leaves.push_back(node);
-        } else {
-            for (auto child : node->children) {
-                collect_leaf_cubes(child, leaves);
-            }
-        }
-    }
-
-    // Find cubes that overlap with query bounding box
-    void find_overlapping_cubes(
-            CubeNode* node,
-            const CubeBoundingBox& query_bbox,
-            std::vector<CubeNode*>& result) {
-
-        if (node == nullptr) return;
-
-        if (!node->bbox.overlaps(query_bbox)) {
-            return;
-        }
-
-        if (node->is_leaf()) {
-            result.push_back(node);
-        } else {
-            for (auto child : node->children) {
-                find_overlapping_cubes(child, query_bbox, result);
-            }
-        }
-    }
-
-    // Save index to file
-    void save_index(const char* output_path) {
-        std::ofstream fout(output_path, std::ios::binary);
-        if (!fout.is_open()) {
-            throw std::runtime_error("Cannot open output file");
-        }
-
-        // Write header
-        fout.write((char*)&attr_dim_, sizeof(size_t));
-        fout.write((char*)&vec_dim_, sizeof(size_t));
-        fout.write((char*)&num_vectors_, sizeof(size_t));
-
-        // Save metadata
-        fout.write((char*)&num_vectors_, sizeof(size_t));
-        fout.write((char*)&attr_dim_, sizeof(size_t));
+        // Assign points to cubes
+        std::vector<std::vector<size_t>> cube_points(layer.total_cubes);
         for (size_t i = 0; i < num_vectors_; i++) {
-            fout.write((char*)metadata_[i].data(), attr_dim_ * sizeof(float));
+            size_t cube_id = compute_cube_id(metadata_[i], layer);
+            cube_points[cube_id].push_back(i);
         }
 
-        // Save cube structure recursively
-        if (root_) {
-            save_cube_recursive(fout, root_);
+        // Add first point per cube (sequential)
+        for (size_t cube_id = 0; cube_id < layer.total_cubes; cube_id++) {
+            if (!cube_points[cube_id].empty()) {
+                size_t point_id = cube_points[cube_id][0];
+                layer.hnsw_index->addCubePoint(
+                    base_data + point_id * vec_dim_ * sizeof(float),
+                    point_id,
+                    cube_id,
+                    metadata_[point_id].data()
+                );
+            }
         }
 
-        fout.close();
-        std::cout << "Index saved to: " << output_path << std::endl;
+        // Add remaining points (parallel)
+        #pragma omp parallel for schedule(dynamic, 144)
+        for (size_t cube_id = 0; cube_id < layer.total_cubes; cube_id++) {
+            for (size_t j = 1; j < cube_points[cube_id].size(); j++) {
+                size_t point_id = cube_points[cube_id][j];
+                layer.hnsw_index->addCubePoint(
+                    base_data + point_id * vec_dim_ * sizeof(float),
+                    point_id,
+                    cube_id,
+                    metadata_[point_id].data()
+                );
+            }
+        }
+
+        // Build adjacency list
+        build_adjacency_list(layer);
+
+        // Set adjacency in HNSW index
+        layer.hnsw_index->setAdjacentCubeIds(layer.adjacent_cubes);
+
+        layers_.push_back(layer);
     }
 
-    // Load index from file
-    void load_index(const char* index_path, const char* data_path) {
-        std::ifstream fin(index_path, std::ios::binary);
-        if (!fin.is_open()) {
-            throw std::runtime_error("Cannot open index file");
-        }
-
-        // Read header
-        fin.read((char*)&attr_dim_, sizeof(size_t));
-        fin.read((char*)&vec_dim_, sizeof(size_t));
-        fin.read((char*)&num_vectors_, sizeof(size_t));
-
-        // Load vector data
-        Matrix<float>* X = new Matrix<float>(const_cast<char*>(data_path));
-        hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char*)X->data;
-
+    // Build all layers and cross-cube edges
+    void build_index(const std::string& data_file, const std::string& metadata_file) {
         // Load metadata
-        size_t n, d;
-        fin.read((char*)&n, sizeof(size_t));
-        fin.read((char*)&d, sizeof(size_t));
-        metadata_.resize(n);
-        for (size_t i = 0; i < n; i++) {
-            metadata_[i].resize(d);
-            fin.read((char*)metadata_[i].data(), d * sizeof(float));
+        load_metadata(metadata_file);
+        compute_global_bbox();
+
+        // Load vector data and keep it alive
+        char* data_file_cstr = const_cast<char*>(data_file.c_str());
+        base_vectors_ = new Matrix<float>(data_file_cstr);
+        if (base_vectors_->n != num_vectors_) {
+            throw std::runtime_error("Vector count mismatch");
+        }
+        if (base_vectors_->d != vec_dim_) {
+            throw std::runtime_error("Vector dimension mismatch");
         }
 
-        // Load cube structure
-        root_ = load_cube_recursive(fin);
+        // Set static base data pointer
+        static_base_data_ = reinterpret_cast<char*>(base_vectors_->data);
+        hnswlib::HierarchicalNSWCube<float>::static_base_data_ = static_base_data_;
 
-        fin.close();
-        std::cout << "Index loaded from: " << index_path << std::endl;
+        // Build all layers (can be parallelized, but sequential for now)
+        std::cout << "Building " << num_layers_ << " layers..." << std::endl;
+        for (size_t layer_id = 0; layer_id < num_layers_; layer_id++) {
+            std::cout << "Building layer " << layer_id << "..." << std::endl;
+            build_layer(layer_id, static_base_data_);
+            std::cout << "Layer " << layer_id << " built: "
+                      << layers_[layer_id].cubes_per_dim << "^" << attr_dim_
+                      << " = " << layers_[layer_id].total_cubes << " cubes" << std::endl;
+        }
+
+        // Build cross-cube edges for all layers (parallel)
+        std::cout << "Building cross-cube edges..." << std::endl;
+        for (size_t layer_id = 0; layer_id < num_layers_; layer_id++) {
+            std::cout << "Building cross-cube edges for layer " << layer_id << "..." << std::endl;
+            #pragma omp parallel for schedule(dynamic, 144)
+            for (size_t i = 0; i < num_vectors_; i++) {
+                layers_[layer_id].hnsw_index->addCrossCubelinks(i);
+            }
+        }
+
+        std::cout << "Index built successfully!" << std::endl;
     }
 
-    // Add a new point to the index
-    bool add_point(const float* vec, const std::vector<float>& attr, hnswlib::labeltype label) {
-        if (!root_ || vec_dim_ == 0 || attr.size() != attr_dim_) {
-            return false;
+    // Layer selection: match filter range size to cube size
+    size_t select_layer_by_range_size(const BoundingBox& filter_bbox) const {
+        if (layers_.empty()) {
+            throw std::runtime_error("No layers built");
         }
 
-        // Add to metadata
-        size_t id = metadata_.size();
-        metadata_.push_back(attr);
+        // Compute average span (number of cubes) for each layer
+        float best_score = std::numeric_limits<float>::max();
+        size_t best_layer = 0;
 
-        // Find the leaf cube for this point
-        CubeNode* leaf = find_leaf_cube(root_, attr);
+        for (size_t layer_id = 0; layer_id < layers_.size(); layer_id++) {
+            const auto& layer = layers_[layer_id];
+            float avg_span = 0.0f;
 
-        if (leaf == nullptr || leaf->index == nullptr) {
-            // Need to create a new leaf or expand existing
-            return false;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                float filter_range = filter_bbox.max_bounds[d] - filter_bbox.min_bounds[d];
+                float span = filter_range / layer.cube_width[d];
+                avg_span += span;
+            }
+            avg_span /= attr_dim_;
+
+            // Goal: filter should span 2-3 cubes for optimal performance
+            float score = std::abs(avg_span - 2.5f);
+            if (score < best_score) {
+                best_score = score;
+                best_layer = layer_id;
+            }
         }
 
-        // Add to the cube's HNSW index
-        leaf->index->addPoint(vec, label);
-        leaf->point_ids.push_back(label);
-
-        // Update cross-cube edges if needed
-        // (For simplicity, we don't rebuild edges for new points)
-
-        num_vectors_++;
-        return true;
+        return best_layer;
     }
 
-    // Delete a point from the index
-    bool delete_point(hnswlib::labeltype label) {
-        if (!root_) {
-            return false;
+    // Layer selection: explicit layer ID
+    size_t select_layer_explicit(size_t layer_id) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
         }
-
-        // Find the cube containing this point
-        CubeNode* leaf = find_leaf_cube_by_label(root_, label);
-
-        if (leaf == nullptr || leaf->index == nullptr) {
-            return false;
-        }
-
-        // Mark as deleted in HNSW
-        leaf->index->markDelete(label);
-
-        num_vectors_--;
-        return true;
+        return layer_id;
     }
 
-    // Update a point in the index
-    bool update_point(hnswlib::labeltype label, const float* new_vec, const std::vector<float>* new_attr) {
-        // First delete the old point
-        if (!delete_point(label)) {
-            return false;
+    // Layer selection: based on filter selectivity
+    size_t select_layer_by_selectivity(const BoundingBox& filter_bbox) const {
+        if (layers_.empty()) {
+            throw std::runtime_error("No layers built");
         }
 
-        // Add the new point
-        std::vector<float> attr = new_attr ? *new_attr : metadata_[label];
-        return add_point(new_vec, attr, label);
+        // Compute filter selectivity (volume ratio)
+        float filter_volume = filter_bbox.volume();
+        float global_volume = global_bbox_.volume();
+        float selectivity = filter_volume / global_volume;
+
+        // Small selectivity → fine layer (high layer_id)
+        // Large selectivity → coarse layer (low layer_id)
+        // Heuristic: layer_id = max(0, log2(selectivity^(-1/d)) - 1)
+        float inv_selectivity = 1.0f / selectivity;
+        float power = std::pow(inv_selectivity, 1.0f / attr_dim_);
+        int layer_id = static_cast<int>(std::log2(power)) - 1;
+        layer_id = std::max(0, std::min(layer_id, static_cast<int>(layers_.size()) - 1));
+
+        return static_cast<size_t>(layer_id);
     }
 
-    // Get index statistics
-    size_t get_num_vectors() const { return num_vectors_; }
-    size_t get_num_leaves() {
-        std::vector<CubeNode*> leaves;
-        collect_leaf_cubes(root_, leaves);
-        return leaves.size();
+    // Generate list of cube IDs overlapping with filter bbox for a specific layer
+    void generate_cube_list(const BoundingBox& filter_bbox, const LayerConfig& layer,
+                           std::vector<hnswlib::tableint>& cube_list) const {
+        // Compute range of cube indices overlapping with filter bbox
+        size_t min_cube_idx[MAX_DIM], max_cube_idx[MAX_DIM];
+
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float min_normalized = (filter_bbox.min_bounds[d] - layer.global_bbox.min_bounds[d]) / layer.cube_width[d];
+            float max_normalized = (filter_bbox.max_bounds[d] - layer.global_bbox.min_bounds[d]) / layer.cube_width[d];
+
+            // For min: use floor to get the cube containing min_bounds
+            min_cube_idx[d] = static_cast<size_t>(std::floor(min_normalized));
+
+            // If min_normalized is exactly an integer (on cube boundary),
+            // we need to include the previous cube since overlaps() considers touching as overlapping
+            if (min_normalized == std::floor(min_normalized) && min_cube_idx[d] > 0) {
+                min_cube_idx[d]--;
+            }
+
+            // For max: use floor to get the cube containing max_bounds
+            max_cube_idx[d] = static_cast<size_t>(std::floor(max_normalized));
+
+            // If max_normalized is exactly an integer (on cube boundary),
+            // the cube at that boundary should be included (since overlaps() considers touching as overlapping)
+            // floor already gives us the right cube index, no need to adjust
+
+            // Clamp to valid range
+            min_cube_idx[d] = std::max(size_t(0), std::min(min_cube_idx[d], layer.cubes_per_dim - 1));
+            max_cube_idx[d] = std::max(size_t(0), std::min(max_cube_idx[d], layer.cubes_per_dim - 1));
+        }
+
+        // Enumerate all cubes in the d-dimensional range
+        std::vector<hnswlib::tableint> all_cubes;
+        enumerate_cubes_recursive(min_cube_idx, max_cube_idx, layer, 0, 0, all_cubes);
+
+        // Filter out empty cubes (cubes with no entry point)
+        for (auto cube_id : all_cubes) {
+            // Check if cube has a valid entry point (not -1)
+            if (cube_id < layer.hnsw_index->cube_entry_points_.size()) {
+                auto ep = layer.hnsw_index->cube_entry_points_[cube_id];
+                if (static_cast<int>(ep) != -1) {
+                    cube_list.push_back(cube_id);
+                }
+            }
+        }
     }
 
-private:
-    // Save cube recursively
-    void save_cube_recursive(std::ofstream& fout, CubeNode* node) {
-        if (!node) {
-            int has_node = 0;
-            fout.write((char*)&has_node, sizeof(int));
+    // Recursively enumerate cubes in d-dimensional range
+    void enumerate_cubes_recursive(const size_t* min_idx, const size_t* max_idx,
+                                   const LayerConfig& layer, size_t dim,
+                                   size_t partial_cube_id, std::vector<hnswlib::tableint>& cube_list) const {
+        if (dim == attr_dim_) {
+            cube_list.push_back(partial_cube_id);
             return;
         }
 
-        int has_node = 1;
-        fout.write((char*)&has_node, sizeof(int));
-
-        // Save cube info
-        fout.write((char*)&node->level, sizeof(int));
-        fout.write((char*)&node->cube_id, sizeof(int));
-
-        // Save grid position
-        int grid_pos_size = node->grid_position.size();
-        fout.write((char*)&grid_pos_size, sizeof(int));
-        for (int pos : node->grid_position) {
-            fout.write((char*)&pos, sizeof(int));
+        size_t multiplier = 1;
+        for (size_t d = 0; d < dim; d++) {
+            multiplier *= layer.cubes_per_dim;
         }
 
-        // Save grid size
-        int grid_sz_size = node->grid_size.size();
-        fout.write((char*)&grid_sz_size, sizeof(int));
-        for (int sz : node->grid_size) {
-            fout.write((char*)&sz, sizeof(int));
+        for (size_t idx = min_idx[dim]; idx <= max_idx[dim]; idx++) {
+            enumerate_cubes_recursive(min_idx, max_idx, layer, dim + 1,
+                                     partial_cube_id + idx * multiplier, cube_list);
         }
+    }
 
-        // Save bounding box
-        for (float b : node->bbox.min_bounds) {
-            fout.write((char*)&b, sizeof(float));
-        }
-        for (float b : node->bbox.max_bounds) {
-            fout.write((char*)&b, sizeof(float));
-        }
+    // Filter functor: admits only points whose metadata lies within filter_bbox
+    class BBoxFilter : public hnswlib::BaseFilterFunctor {
+        const BoundingBox& bbox_;
+        size_t attr_dim_;
+    public:
+        BBoxFilter(const BoundingBox& bbox, size_t attr_dim)
+            : bbox_(bbox), attr_dim_(attr_dim) {}
 
-        // Save point IDs
-        int num_points = node->point_ids.size();
-        fout.write((char*)&num_points, sizeof(int));
-        for (hnswlib::labeltype id : node->point_ids) {
-            fout.write((char*)&id, sizeof(hnswlib::labeltype));
-        }
-
-        // Save HNSW index
-        int has_hnsw = (node->index != nullptr) ? 1 : 0;
-        fout.write((char*)&has_hnsw, sizeof(int));
-        if (node->index) {
-            // Save HNSW index - use a temporary filename
-            std::string hnsw_path = "/tmp/hnsw_temp.bin";
-            node->index->saveIndex(hnsw_path);
-
-            // Read and save HNSW data
-            std::ifstream hnsw_in(hnsw_path, std::ios::binary | std::ios::ate);
-            if (hnsw_in.is_open()) {
-                size_t hnsw_size = hnsw_in.tellg();
-                hnsw_in.seekg(0);
-                char* hnsw_data = new char[hnsw_size];
-                hnsw_in.read(hnsw_data, hnsw_size);
-                fout.write((char*)&hnsw_size, sizeof(size_t));
-                fout.write(hnsw_data, hnsw_size);
-                delete[] hnsw_data;
-                hnsw_in.close();
-                std::remove(hnsw_path.c_str());
+        // Called by searchCubeKnn with a pointer to the point's raw metadata float array
+        bool operator()(hnswlib::metatype* meta) override {
+            for (size_t d = 0; d < attr_dim_; d++) {
+                if (meta[d] < bbox_.min_bounds[d] || meta[d] > bbox_.max_bounds[d])
+                    return false;
             }
+            return true;
+        }
+    };
+
+    // Main search method
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    search(const float* query_vector, const BoundingBox& filter_bbox, size_t k,
+           LayerSelectionStrategy strategy = LayerSelectionStrategy::RANGE_SIZE,
+           size_t explicit_layer_id = 0, size_t ef = 100) {
+        // Select layer
+        size_t layer_id;
+        switch (strategy) {
+            case LayerSelectionStrategy::RANGE_SIZE:
+                layer_id = select_layer_by_range_size(filter_bbox);
+                break;
+            case LayerSelectionStrategy::EXPLICIT:
+                layer_id = select_layer_explicit(explicit_layer_id);
+                break;
+            case LayerSelectionStrategy::SELECTIVITY:
+                layer_id = select_layer_by_selectivity(filter_bbox);
+                break;
+            default:
+                throw std::runtime_error("Unknown layer selection strategy");
         }
 
-        // Save children
-        int num_children = node->children.size();
-        fout.write((char*)&num_children, sizeof(int));
-        for (auto child : node->children) {
-            save_cube_recursive(fout, child);
+        const auto& layer = layers_[layer_id];
+
+        // Generate cube list
+        std::vector<hnswlib::tableint> cube_list;
+        generate_cube_list(filter_bbox, layer, cube_list);
+
+        if (cube_list.empty()) {
+            return std::priority_queue<std::pair<float, hnswlib::labeltype>>();
         }
+
+        // Set ef parameter
+        layer.hnsw_index->setEf(ef);
+
+        // Search with in-traversal filter — only admits points inside filter_bbox
+        BBoxFilter bbox_filter(filter_bbox, attr_dim_);
+        return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &bbox_filter);
     }
 
-    // Load cube recursively
-    CubeNode* load_cube_recursive(std::ifstream& fin) {
-        int has_node;
-        fin.read((char*)&has_node, sizeof(int));
-        if (!has_node) {
-            return nullptr;
-        }
-
-        CubeNode* node = new CubeNode();
-
-        // Read cube info
-        fin.read((char*)&node->level, sizeof(int));
-        fin.read((char*)&node->cube_id, sizeof(int));
-
-        // Read grid position
-        int grid_pos_size;
-        fin.read((char*)&grid_pos_size, sizeof(int));
-        node->grid_position.resize(grid_pos_size);
-        for (int i = 0; i < grid_pos_size; i++) {
-            fin.read((char*)&node->grid_position[i], sizeof(int));
-        }
-
-        // Read grid size
-        int grid_sz_size;
-        fin.read((char*)&grid_sz_size, sizeof(int));
-        node->grid_size.resize(grid_sz_size);
-        for (int i = 0; i < grid_sz_size; i++) {
-            fin.read((char*)&node->grid_size[i], sizeof(int));
-        }
-
-        // Read bounding box
-        node->bbox = CubeBoundingBox(attr_dim_);
-        for (int i = 0; i < attr_dim_; i++) {
-            fin.read((char*)&node->bbox.min_bounds[i], sizeof(float));
-        }
-        for (int i = 0; i < attr_dim_; i++) {
-            fin.read((char*)&node->bbox.max_bounds[i], sizeof(float));
-        }
-
-        // Read point IDs
-        int num_points;
-        fin.read((char*)&num_points, sizeof(int));
-        node->point_ids.resize(num_points);
-        for (int i = 0; i < num_points; i++) {
-            fin.read((char*)&node->point_ids[i], sizeof(hnswlib::labeltype));
-        }
-
-        // Read HNSW index
-        int has_hnsw;
-        fin.read((char*)&has_hnsw, sizeof(int));
-        if (has_hnsw) {
-            size_t hnsw_size;
-            fin.read((char*)&hnsw_size, sizeof(size_t));
-            char* hnsw_data = new char[hnsw_size];
-            fin.read(hnsw_data, hnsw_size);
-
-            // Write to temp file and load
-            std::string hnsw_path = "/tmp/hnsw_temp_load.bin";
-            std::ofstream hnsw_out(hnsw_path, std::ios::binary);
-            hnsw_out.write(hnsw_data, hnsw_size);
-            hnsw_out.close();
-            delete[] hnsw_data;
-
-            auto l2space = new hnswlib::L2Space(vec_dim_);
-            node->index = new hnswlib::HierarchicalNSWCube<float>(l2space, 0);
-            node->index->loadIndex(hnsw_path, l2space);
-            std::remove(hnsw_path.c_str());
-        }
-
-        // Read children
-        int num_children;
-        fin.read((char*)&num_children, sizeof(int));
-        node->children.resize(num_children, nullptr);
-        for (int i = 0; i < num_children; i++) {
-            node->children[i] = load_cube_recursive(fin);
-        }
-
-        return node;
-    }
-
-    // Find leaf cube for a point based on metadata
-    CubeNode* find_leaf_cube(CubeNode* node, const std::vector<float>& attr) {
-        if (!node) return nullptr;
-
-        if (node->is_leaf()) {
-            return node;
-        }
-
-        // Determine which child to follow
-        size_t child_idx = 0;
+    // Convenience method for radius queries
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    radius_search(const float* query_vector, const std::vector<float>& center, float radius,
+                  size_t k, LayerSelectionStrategy strategy = LayerSelectionStrategy::RANGE_SIZE,
+                  size_t explicit_layer_id = 0, size_t ef = 100) {
+        // Create bounding box from radius
+        BoundingBox filter_bbox(attr_dim_);
         for (size_t d = 0; d < attr_dim_; d++) {
-            float midpoint = (node->bbox.min_bounds[d] + node->bbox.max_bounds[d]) / 2.0f;
-            if (attr[d] >= midpoint) {
-                child_idx |= (1 << d);
-            }
+            filter_bbox.min_bounds[d] = center[d] - radius;
+            filter_bbox.max_bounds[d] = center[d] + radius;
         }
 
-        if (child_idx < node->children.size() && node->children[child_idx]) {
-            return find_leaf_cube(node->children[child_idx], attr);
-        }
-
-        return nullptr;
+        return search(query_vector, filter_bbox, k, strategy, explicit_layer_id, ef);
     }
 
-    // Find leaf cube by label
-    CubeNode* find_leaf_cube_by_label(CubeNode* node, hnswlib::labeltype label) {
-        if (!node) return nullptr;
+    // Get number of layers
+    size_t get_num_layers() const {
+        return layers_.size();
+    }
 
-        if (node->is_leaf()) {
-            // Check if label is in this cube
-            for (hnswlib::labeltype id : node->point_ids) {
-                if (id == label) {
-                    return node;
-                }
-            }
-            return nullptr;
+    // Get layer info
+    void get_layer_info(size_t layer_id, size_t& cubes_per_dim, size_t& total_cubes) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
+        }
+        cubes_per_dim = layers_[layer_id].cubes_per_dim;
+        total_cubes = layers_[layer_id].total_cubes;
+    }
+
+    // Get metadata for a point
+    const std::vector<float>& get_metadata(size_t point_id) const {
+        if (point_id >= metadata_.size()) {
+            throw std::runtime_error("Invalid point_id");
+        }
+        return metadata_[point_id];
+    }
+
+    // Get global bounding box
+    const BoundingBox& get_global_bbox() const {
+        return global_bbox_;
+    }
+
+    // Public method to compute cube ID for a point at a specific layer
+    size_t compute_cube_id_for_layer(const std::vector<float>& metadata, size_t layer_id) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
+        }
+        return compute_cube_id(metadata, layers_[layer_id]);
+    }
+
+    // Get cube bounding box for a specific cube and layer
+    BoundingBox get_cube_bbox(size_t cube_id, size_t layer_id) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
         }
 
-        // Search children
-        for (auto child : node->children) {
-            CubeNode* result = find_leaf_cube_by_label(child, label);
-            if (result) return result;
+        const auto& layer = layers_[layer_id];
+        if (cube_id >= layer.total_cubes) {
+            throw std::runtime_error("Invalid cube_id");
         }
 
-        return nullptr;
+        // Decode cube_id to coordinates
+        size_t coords[MAX_DIM];
+        decode_cube_id(cube_id, layer, coords);
+
+        // Compute bounding box
+        BoundingBox bbox(attr_dim_);
+        for (size_t d = 0; d < attr_dim_; d++) {
+            bbox.min_bounds[d] = layer.global_bbox.min_bounds[d] + coords[d] * layer.cube_width[d];
+            bbox.max_bounds[d] = bbox.min_bounds[d] + layer.cube_width[d];
+        }
+
+        return bbox;
+    }
+
+    // Public method to generate cube list for testing
+    std::vector<hnswlib::tableint> generate_cube_list_for_layer(
+        const BoundingBox& filter_bbox, size_t layer_id) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
+        }
+
+        std::vector<hnswlib::tableint> cube_list;
+        generate_cube_list(filter_bbox, layers_[layer_id], cube_list);
+        return cube_list;
+    }
+
+    // Get layer cube width
+    std::vector<float> get_layer_cube_width(size_t layer_id) const {
+        if (layer_id >= layers_.size()) {
+            throw std::runtime_error("Invalid layer_id");
+        }
+
+        std::vector<float> widths(attr_dim_);
+        for (size_t d = 0; d < attr_dim_; d++) {
+            widths[d] = layers_[layer_id].cube_width[d];
+        }
+        return widths;
     }
 };
+
+// Static member definition
+char* IndexCube::static_base_data_ = nullptr;

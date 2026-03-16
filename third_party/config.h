@@ -10,6 +10,9 @@
 #define HNSW_M 16
 #define HNSW_efConstruction 200
 #define INDEX_ELASIIC_BOUND 4096
+#define CUBE 4
+#define META_DIM 2
+#define CROSS 2
 
 template<typename dist_t> char *hnswlib::HierarchicalNSWStatic<dist_t>::static_base_data_ = NULL;
 template<typename dist_t> char *hnswlib::HierarchicalNSWCube<dist_t>::static_base_data_ = NULL;

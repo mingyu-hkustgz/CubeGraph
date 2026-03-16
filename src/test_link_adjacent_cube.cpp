@@ -10,22 +10,24 @@
 #include "utils.h"
 #include "hnsw-cube.h"
 #include "config.h"
+
 using namespace std;
 using namespace hnswlib;
 
-int main(int argc, char * argv[]) {
 
-    const struct option longopts[] ={
+int main(int argc, char *argv[]) {
+
+    const struct option longopts[] = {
             // General Parameter
-            {"help",                        no_argument,       0, 'h'},
+            {"help",           no_argument,       0, 'h'},
 
             // Index Parameter
-            {"efConstruction",              required_argument, 0, 'e'},
-            {"M",                           required_argument, 0, 'm'},
+            {"efConstruction", required_argument, 0, 'e'},
+            {"M",              required_argument, 0, 'm'},
 
             // Indexing Path
-            {"data_path",                   required_argument, 0, 'd'},
-            {"index_path",                  required_argument, 0, 'i'},
+            {"data_path",      required_argument, 0, 'd'},
+            {"index_path",     required_argument, 0, 'i'},
     };
 
     int ind;
@@ -40,9 +42,9 @@ int main(int argc, char * argv[]) {
     size_t efConstruction = 0;
     size_t M = 0;
 
-    while(iarg != -1){
+    while (iarg != -1) {
         iarg = getopt_long(argc, argv, "d:s:", longopts, &ind);
-        switch (iarg){
+        switch (iarg) {
             case 'd':
                 if (optarg) {
                     strcpy(dataset, optarg);
@@ -64,47 +66,44 @@ int main(int argc, char * argv[]) {
     size_t N = X->n;
     size_t report = 50000;
     L2Space l2space(D);
-    auto* appr_alg = new HierarchicalNSWCube<float> (&l2space, N, 2, 2, 2, HNSW_M, HNSW_efConstruction);
+    auto *appr_alg = new HierarchicalNSWCube<float>(&l2space, N, META_DIM, CUBE, CROSS, HNSW_M, HNSW_efConstruction);
 
     // Add first point
-    appr_alg->addCubePoint(X->data, 0,0);
-    appr_alg->addCubePoint(X->data, 500000,1);
-    unsigned check_tag = 1;
-#pragma omp parallel for schedule(dynamic, 144)
-    for(int i = 1; i < 500000; i++){
-        appr_alg->addCubePoint(X->data + i * D, i, 0);
-#pragma omp critical
-        {
-            check_tag++;
-            if(check_tag % report == 0){
-                cerr << "Processing Cube 0 - " << check_tag << " / " << N << endl;
-            }
-        }
+    for (int i = 0; i < CUBE; i++) {
+        std::vector<hnswlib::metatype> meta(META_DIM);
+        meta[0] = (float)i;
+        appr_alg->addCubePoint(X->data, i, i % CUBE, meta.data());
     }
 
+    unsigned check_tag = 1;
 #pragma omp parallel for schedule(dynamic, 144)
-    for(int i = 500001; i < N; i++){
-        appr_alg->addCubePoint(X->data + i * D, i, 1);
+    for (int i = CUBE; i < N; i++) {
+        std::vector<hnswlib::metatype> meta(META_DIM);
+        meta[0] = (float)i;
+        appr_alg->addCubePoint(X->data + i * D, i, i % CUBE, meta.data());
 #pragma omp critical
         {
             check_tag++;
-            if(check_tag % report == 0){
-                cerr << "Processing CUbe 1 - " << check_tag << " / " << N << endl;
+            if (check_tag % report == 0) {
+                cerr << "Processing - " << check_tag << " / " << N << endl;
             }
         }
     }
-    std::vector<std::vector<labeltype>> adj_cube(2);
-    adj_cube[0].push_back(1);
-    adj_cube[1].push_back(0);
+    std::vector<std::vector<labeltype>> adj_cube(CUBE);
+    for(int i=0;i<CUBE;i++){
+        if(i>0) adj_cube[i].push_back(i-1);
+        if(i+1<CUBE) adj_cube[i].push_back(i+1);
+    }
+
     appr_alg->setAdjacentCubeIds(adj_cube);
     check_tag = 0;
 #pragma omp parallel for schedule(dynamic, 144)
-    for(int i = 0; i < N; i++){
+    for (int i = 0; i < N; i++) {
         appr_alg->addCrossCubelinks(i);
 #pragma omp critical
         {
             check_tag++;
-            if(check_tag % report == 0){
+            if (check_tag % report == 0) {
                 cerr << "Processing Cross - " << check_tag << " / " << N << endl;
             }
         }

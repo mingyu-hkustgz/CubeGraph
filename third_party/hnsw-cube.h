@@ -1059,7 +1059,7 @@ namespace hnswlib {
                 auto ep_id = cube_entry_points_[cube_id];
                 char* ep_data = getDataByInternalId(ep_id);
                 dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
-                if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id)))) {
+                if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getMetadata(ep_id)))) {
                     top_candidates.emplace(dist, ep_id);
                     lowerBound = std::min(lowerBound, dist);
                     candidate_set.emplace(-dist, ep_id);
