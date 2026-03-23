@@ -1,121 +1,26 @@
+#define USE_SSE
+#define USE_AVX
+#define USE_AVX512
+
 #include <iostream>
 #include <fstream>
-#include <vector>
+
+#include <ctime>
 #include <cmath>
-#include <chrono>
-#include <getopt.h>
-#include <random>
-
-#include "IndexCube.h"
+#include "hnsw-cube.h"
 #include "matrix.h"
-#include "../third_party/utils.h"
-
+#include "utils.h"
+#include <getopt.h>
+#include "config.h"
+#include "IndexCube.h"
 using namespace std;
 using namespace hnswlib;
 
-// Define static member
-template<>
-char* HierarchicalNSWCube<float>::static_base_data_ = nullptr;
+const int MAXK = 100;
 
-struct BenchmarkConfig {
-    string index_file;
-    string base_file;
-    string query_file;
-    string metadata_file;
-    string groundtruth_file;
-    string filter_file;  // Pre-generated filters
-    string output_file;
-    int k = 10;
-    float filter_ratio = 0.1f;
-    LayerSelectionStrategy strategy = LayerSelectionStrategy::RANGE_SIZE;
-    int explicit_layer = 0;
-    int ef_base = 50;
-    int ef_max = 500;
-    int ef_step = 50;
-    size_t attr_dim = 2;
-    size_t num_layers = 3;
-    size_t M = 16;
-    size_t ef_construction = 200;
-    size_t cross_edge_count = 2;
-    bool rebuild_index = false;
-};
 
-void print_usage(const char* program_name) {
-    cout << "Usage: " << program_name << " [options]" << endl;
-    cout << "Options:" << endl;
-    cout << "  --base <file>           Base vectors file (.fvecs)" << endl;
-    cout << "  --query <file>          Query vectors file (.fvecs)" << endl;
-    cout << "  --metadata <file>       Metadata file (.bin)" << endl;
-    cout << "  --groundtruth <file>    Groundtruth file (.bin)" << endl;
-    cout << "  --filters <file>        Pre-generated filters file (.bin, optional)" << endl;
-    cout << "  --output <file>         Output log file" << endl;
-    cout << "  --k <value>             Number of neighbors (default: 10)" << endl;
-    cout << "  --filter-ratio <value>  Filter selectivity ratio (default: 0.1)" << endl;
-    cout << "  --strategy <name>       Layer selection strategy: RANGE_SIZE|SELECTIVITY|EXPLICIT (default: RANGE_SIZE)" << endl;
-    cout << "  --layer <id>            Explicit layer ID (for EXPLICIT strategy)" << endl;
-    cout << "  --ef-base <value>       Starting ef value (default: 50)" << endl;
-    cout << "  --ef-max <value>        Maximum ef value (default: 500)" << endl;
-    cout << "  --ef-step <value>       ef increment step (default: 50)" << endl;
-    cout << "  --attr-dim <value>      Attribute dimension (default: 2)" << endl;
-    cout << "  --num-layers <value>    Number of layers (default: 3)" << endl;
-    cout << "  --M <value>             HNSW M parameter (default: 16)" << endl;
-    cout << "  --ef-construction <val> HNSW ef_construction (default: 200)" << endl;
-    cout << "  --cross-edges <value>   Cross-cube edge count (default: 2)" << endl;
-    cout << "  --rebuild               Rebuild index instead of loading" << endl;
-    cout << "  --help                  Show this help message" << endl;
-}
-
-// Load groundtruth from binary file
-// Format: [n: size_t][k: size_t][query_0_ids: int32[k]][query_1_ids: int32[k]]...
-vector<vector<int>> load_groundtruth(const string& filename) {
-    ifstream in(filename, ios::binary);
-    if (!in.is_open()) {
-        throw runtime_error("Cannot open groundtruth file: " + filename);
-    }
-
-    size_t n, k;
-    in.read(reinterpret_cast<char*>(&n), sizeof(size_t));
-    in.read(reinterpret_cast<char*>(&k), sizeof(size_t));
-
-    vector<vector<int>> groundtruth(n, vector<int>(k));
-    for (size_t i = 0; i < n; i++) {
-        in.read(reinterpret_cast<char*>(groundtruth[i].data()), k * sizeof(int));
-    }
-
-    in.close();
-    return groundtruth;
-}
-
-// Load pre-generated filters from binary file
-// Format: [n: size_t][attr_dim: size_t]
-//         [query_0_min: float[attr_dim]][query_0_max: float[attr_dim]]...
-vector<BoundingBox> load_filters(const string& filename, size_t attr_dim) {
-    ifstream in(filename, ios::binary);
-    if (!in.is_open()) {
-        throw runtime_error("Cannot open filters file: " + filename);
-    }
-
-    size_t n, file_attr_dim;
-    in.read(reinterpret_cast<char*>(&n), sizeof(size_t));
-    in.read(reinterpret_cast<char*>(&file_attr_dim), sizeof(size_t));
-
-    if (file_attr_dim != attr_dim) {
-        throw runtime_error("Filter attr_dim mismatch");
-    }
-
-    vector<BoundingBox> filters;
-    filters.reserve(n);
-
-    for (size_t i = 0; i < n; i++) {
-        BoundingBox bbox(attr_dim);
-        in.read(reinterpret_cast<char*>(bbox.min_bounds.data()), attr_dim * sizeof(float));
-        in.read(reinterpret_cast<char*>(bbox.max_bounds.data()), attr_dim * sizeof(float));
-        filters.push_back(bbox);
-    }
-
-    in.close();
-    return filters;
-}
+int efSearch = 100;
+double outer_recall = 0;
 
 // Generate filter bounding box centered at a random point
 BoundingBox generate_filter_bbox(const BoundingBox& global_bbox, float filter_ratio, size_t attr_dim, mt19937& rng) {
@@ -127,8 +32,8 @@ BoundingBox generate_filter_bbox(const BoundingBox& global_bbox, float filter_ra
 
         // Random center within valid range
         uniform_real_distribution<float> dist(
-            global_bbox.min_bounds[d] + filter_size / 2,
-            global_bbox.max_bounds[d] - filter_size / 2
+                global_bbox.min_bounds[d] + filter_size / 2,
+                global_bbox.max_bounds[d] - filter_size / 2
         );
         float center = dist(rng);
 
@@ -139,280 +44,234 @@ BoundingBox generate_filter_bbox(const BoundingBox& global_bbox, float filter_ra
     return filter_bbox;
 }
 
-// Compute recall between search result and groundtruth
-float compute_recall(priority_queue<pair<float, labeltype>> result,
-                     const vector<int>& groundtruth, int k) {
-    unordered_set<int> gt_set;
-    for (int id : groundtruth) {
-        if (id >= 0) {  // -1 indicates no valid result
-            gt_set.insert(id);
+
+template<typename GT>
+static void get_gt(Matrix<float> &Q, Matrix<float> &X, GT G, vector<std::priority_queue<std::pair<float, labeltype >>> &answers,
+                   size_t subk) {
+    (vector<std::priority_queue<std::pair<float, labeltype >>>(Q.n)).swap(answers);
+    for (int i = 0; i < Q.n; i++) {
+        for (int j = 0; j < subk; j++) {
+            auto gt = G.data[G.d * i + j];
+            if (gt < 0) break;  // no more valid ground-truth entries
+            answers[i].emplace(sqr_dist(Q.data + i * Q.d ,X.data + gt * X.d, X.d), gt);
         }
     }
-
-    int hits = 0;
-    int count = 0;
-    while (!result.empty() && count < k) {
-        if (gt_set.find(result.top().second) != gt_set.end()) {
-            hits++;
-        }
-        result.pop();
-        count++;
-    }
-
-    return (float)hits / min(k, (int)gt_set.size());
 }
 
-// Run benchmark with varying ef values
-void run_benchmark(IndexCube& index, const BenchmarkConfig& config) {
-    // Load queries
-    char* query_file_cstr = const_cast<char*>(config.query_file.c_str());
-    Matrix<float> Q(query_file_cstr);
-    cout << "Loaded " << Q.n << " query vectors" << endl;
+static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
+                        vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k) {
+    size_t correct = 0;
+    size_t total = 0;
+    long double total_time = 0;
+    long double total_ratio = 0;
+    size_t dist_count = 0;
+    std::vector<tableint> cubelist;
+    for(int i=0;i<CUBE;i++) cubelist.push_back(i);
+    for (int i = 0; i < qsize; i++) {
+#ifndef WIN32
+        float sys_t, usr_t, usr_t_sum = 0;
+        struct rusage run_start, run_end;
+        GetCurTime(&run_start);
+#endif
 
-    // Load groundtruth
-    vector<vector<int>> groundtruth = load_groundtruth(config.groundtruth_file);
-    cout << "Loaded groundtruth for " << groundtruth.size() << " queries, k=" << groundtruth[0].size() << endl;
-
-    if (Q.n != groundtruth.size()) {
-        throw runtime_error("Query count mismatch with groundtruth");
+        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.search(massQ + vecdim * i, k, 0);
+#ifndef WIN32
+        GetCurTime(&run_end);
+        GetTime(&run_start, &run_end, &usr_t, &sys_t);
+        total_time += usr_t * 1e6;
+#endif
+        std::priority_queue<std::pair<float, labeltype >> gt(answers[i]);
+        total += gt.size();
+        int tmp = recall(result, gt);
+        total_ratio += Ratio(result, gt);
+        correct += tmp;
     }
+    long double time_us_per_query = total_time / qsize;
+    long double recall = 1.0f * correct / total;
+    long double dist_ratio =  total_ratio/ qsize;
 
-    // Open output file
-    ofstream out(config.output_file);
-    if (!out.is_open()) {
-        throw runtime_error("Cannot open output file: " + config.output_file);
+    cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " "<<dist_ratio<< endl;
+    cerr << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " "<<dist_ratio<< endl;
+    outer_recall = recall * 100;
+    return;
+}
+
+static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
+                           vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k) {
+    vector<size_t> efs;
+    unsigned efBase = efSearch;
+    for (int i = 0; i < 15; i++) {
+        efs.push_back(efBase);
+        efBase += efSearch;
     }
-
-    // Load or generate filters
-    vector<BoundingBox> filters;
-    if (!config.filter_file.empty()) {
-        cout << "Loading pre-generated filters from " << config.filter_file << "..." << endl;
-        filters = load_filters(config.filter_file, config.attr_dim);
-        cout << "  Loaded " << filters.size() << " filters" << endl;
-
-        if (filters.size() != Q.n) {
-            throw runtime_error("Filter count mismatch with query count");
-        }
-    } else {
-        cout << "Generating random filters (ratio=" << config.filter_ratio << ", seed=42)..." << endl;
-        mt19937 rng(42);
-        BoundingBox global_bbox = index.get_global_bbox();
-        for (size_t i = 0; i < Q.n; i++) {
-            filters.push_back(generate_filter_bbox(global_bbox, config.filter_ratio, config.attr_dim, rng));
-        }
-        cout << "  Generated " << filters.size() << " filters" << endl;
+    for (size_t ef: efs) {
+        appr_alg.set_global_ef(ef);
+        test_approx(massQ, vecsize, qsize, appr_alg, vecdim, answers, k);
+        if(outer_recall > 99.5) break;
     }
+}
 
-    cout << endl;
-    cout << "=== Running Benchmark ===" << endl;
-    cout << "Filter ratio: " << config.filter_ratio << endl;
-    cout << "Strategy: ";
-    switch (config.strategy) {
-        case LayerSelectionStrategy::RANGE_SIZE: cout << "RANGE_SIZE"; break;
-        case LayerSelectionStrategy::SELECTIVITY: cout << "SELECTIVITY"; break;
-        case LayerSelectionStrategy::EXPLICIT: cout << "EXPLICIT (layer " << config.explicit_layer << ")"; break;
-    }
-    cout << endl;
-    cout << "k: " << config.k << endl;
-    cout << "ef range: " << config.ef_base << " to " << config.ef_max << " (step " << config.ef_step << ")" << endl;
-    cout << endl;
+// Compute filtered groundtruth: for each query, find top-k L2 nearest base vectors
+// among those whose metadata lies within the query's random bounding-box filter.
+// Returns Matrix<int> G where G.data[G.d * q + r] = ID of r-th nearest neighbor
+// for query q (same layout as ivecs-loaded Matrix<unsigned>).
+static Matrix<int> compute_filtered_gt(
+    Matrix<float> &Q,
+    Matrix<float> &X_base,
+    const std::vector<BoundingBox> &filters,
+    const std::vector<std::vector<float>> &metadata,
+    size_t attr_dim,
+    size_t k)
+{
+    Matrix<int> G(Q.n, k);
+#pragma omp parallel for schedule(dynamic, 144)
+    for (size_t i = 0; i < Q.n; i++) {
+        const float *query = Q.data + i * Q.d;
+        const BoundingBox &fb = filters[i];
 
-    // Iterate over ef values
-    for (int ef = config.ef_base; ef <= config.ef_max; ef += config.ef_step) {
-        cout << "Testing ef=" << ef << "..." << flush;
-
-        float total_recall = 0.0f;
-        float total_ratio = 0.0f;
-        int valid_queries = 0;
-
-        auto start_time = chrono::high_resolution_clock::now();
-
-        // Run all queries
-        for (size_t q = 0; q < Q.n; q++) {
-            float* query = Q.data + q * Q.d;
-
-            // Use pre-loaded or pre-generated filter
-            BoundingBox filter_bbox = filters[q];
-
-            // Search
-            try {
-                auto result = index.search(query, filter_bbox, config.k, config.strategy, config.explicit_layer, ef);
-
-                // Compute recall
-                float recall = compute_recall(result, groundtruth[q], config.k);
-                total_recall += recall;
-
-                // Compute distance ratio (if we have results)
-                if (!result.empty() && !groundtruth[q].empty() && groundtruth[q][0] >= 0) {
-                    total_ratio += 1.0f;  // Simplified - actual ratio would need groundtruth distances
+        // Pass 1: collect indices of base vectors passing the filter
+        std::vector<size_t> passed;
+        passed.reserve(X_base.n);
+        for (size_t j = 0; j < X_base.n; j++) {
+            const float *meta = metadata[j].data();
+            bool ok = true;
+            for (size_t d = 0; d < attr_dim; d++) {
+                float v = meta[d];
+                if (v < fb.min_bounds[d] || v > fb.max_bounds[d]) {
+                    ok = false;
+                    break;
                 }
-
-                valid_queries++;
-            } catch (const exception& e) {
-                // Skip failed queries
-                cerr << "Query " << q << " failed: " << e.what() << endl;
             }
+            if (ok) passed.push_back(j);
         }
 
-        auto end_time = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<chrono::microseconds>(end_time - start_time).count();
-
-        // Compute metrics
-        float avg_recall = (valid_queries > 0) ? (total_recall / valid_queries) : 0.0f;
-        float qps = (duration > 0) ? (valid_queries * 1000000.0f / duration) : 0.0f;
-        float avg_ratio = (valid_queries > 0) ? (total_ratio / valid_queries) : 1.0f;
-
-        // Output: <recall%> <QPS> <distance_ratio>
-        out << (avg_recall * 100.0f) << " " << qps << " " << avg_ratio << endl;
-
-        cout << " Recall=" << (avg_recall * 100.0f) << "%, QPS=" << qps << endl;
+        // Pass 2: compute L2 distances and find top-k
+        if (passed.size() <= k) {
+            std::vector<std::pair<float, size_t>> dists;
+            dists.reserve(passed.size());
+            for (size_t idx : passed) {
+                float d = sqr_dist(query, X_base.data + idx * X_base.d, Q.d);
+                dists.emplace_back(d, idx);
+            }
+            std::sort(dists.begin(), dists.end(),
+                      [](const auto &a, const auto &b) { return a.first < b.first; });
+            size_t r = 0;
+            for (auto &p : dists) G.data[G.d * i + r++] = (int)p.second;
+            for (; r < k; r++) G.data[G.d * i + r] = -1;
+        } else {
+            std::vector<std::pair<float, size_t>> dists;
+            dists.reserve(passed.size());
+            for (size_t idx : passed) {
+                float d = sqr_dist(query, X_base.data + idx * X_base.d, Q.d);
+                dists.emplace_back(d, idx);
+            }
+            // O(n) partial sort: nth_element to find top-k, then sort top-k
+            std::nth_element(dists.begin(), dists.begin() + k, dists.end(),
+                             [](const auto &a, const auto &b) { return a.first < b.first; });
+            std::sort(dists.begin(), dists.begin() + k,
+                      [](const auto &a, const auto &b) { return a.first < b.first; });
+            for (size_t r = 0; r < k; r++)
+                G.data[G.d * i + r] = (int)dists[r].second;
+        }
     }
-
-    out.close();
-    cout << endl;
-    cout << "Results written to: " << config.output_file << endl;
+    return G;
 }
 
-int main(int argc, char* argv[]) {
-    BenchmarkConfig config;
+int main(int argc, char *argv[]) {
 
-    // Define long options
-    static struct option long_options[] = {
-        {"base", required_argument, 0, 'b'},
-        {"query", required_argument, 0, 'q'},
-        {"metadata", required_argument, 0, 'm'},
-        {"groundtruth", required_argument, 0, 'g'},
-        {"filters", required_argument, 0, 'F'},
-        {"output", required_argument, 0, 'o'},
-        {"k", required_argument, 0, 'k'},
-        {"filter-ratio", required_argument, 0, 'f'},
-        {"strategy", required_argument, 0, 's'},
-        {"layer", required_argument, 0, 'l'},
-        {"ef-base", required_argument, 0, 'e'},
-        {"ef-max", required_argument, 0, 'E'},
-        {"ef-step", required_argument, 0, 'S'},
-        {"attr-dim", required_argument, 0, 'a'},
-        {"num-layers", required_argument, 0, 'n'},
-        {"M", required_argument, 0, 'M'},
-        {"ef-construction", required_argument, 0, 'c'},
-        {"cross-edges", required_argument, 0, 'x'},
-        {"rebuild", no_argument, 0, 'r'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
+    const struct option longopts[] = {
+            // General Parameter
+            {"help",                no_argument,       0, 'h'},
+
+            // Query Parameter
+            {"randomized",          required_argument, 0, 'd'},
+            {"k",                   required_argument, 0, 'k'},
+            {"epsilon0",            required_argument, 0, 'e'},
+            {"gap",                 required_argument, 0, 'p'},
+
+            // Indexing Path
+            {"dataset",             required_argument, 0, 'n'},
+            {"index_path",          required_argument, 0, 'i'},
+            {"query_path",          required_argument, 0, 'q'},
+            {"groundtruth_path",    required_argument, 0, 'g'},
+            {"result_path",         required_argument, 0, 'r'},
+            {"transformation_path", required_argument, 0, 't'},
     };
 
-    // Parse command-line arguments
-    int opt;
-    int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "b:q:m:g:F:o:k:f:s:l:e:E:S:a:n:M:c:x:rh", long_options, &option_index)) != -1) {
-        switch (opt) {
-            case 'b': config.base_file = optarg; break;
-            case 'q': config.query_file = optarg; break;
-            case 'm': config.metadata_file = optarg; break;
-            case 'g': config.groundtruth_file = optarg; break;
-            case 'F': config.filter_file = optarg; break;
-            case 'o': config.output_file = optarg; break;
-            case 'k': config.k = atoi(optarg); break;
-            case 'f': config.filter_ratio = atof(optarg); break;
-            case 's':
-                if (string(optarg) == "RANGE_SIZE") {
-                    config.strategy = LayerSelectionStrategy::RANGE_SIZE;
-                } else if (string(optarg) == "SELECTIVITY") {
-                    config.strategy = LayerSelectionStrategy::SELECTIVITY;
-                } else if (string(optarg) == "EXPLICIT") {
-                    config.strategy = LayerSelectionStrategy::EXPLICIT;
-                } else {
-                    cerr << "Unknown strategy: " << optarg << endl;
-                    return 1;
+    int ind;
+    int iarg = 0, K = 10, num_thread = 1;
+    opterr = 1; //getopt error message (off: 0)
+    char source[256] = "";
+    char dataset[256] = "";
+    char index_path[256] = "";
+    char query_path[256] = "";
+    char data_path[256] = "";
+    char meta_path[256] = "";
+    char groundtruth_path[256] = "";
+    char result_path[256] = "";
+    char file_type[256] = "fvecs";
+    int subk = 100;
+
+    while (iarg != -1) {
+        iarg = getopt_long(argc, argv, "d:s:k:r", longopts, &ind);
+        switch (iarg) {
+            case 'd':
+                if (optarg) {
+                    strcpy(dataset, optarg);
                 }
                 break;
-            case 'l': config.explicit_layer = atoi(optarg); break;
-            case 'e': config.ef_base = atoi(optarg); break;
-            case 'E': config.ef_max = atoi(optarg); break;
-            case 'S': config.ef_step = atoi(optarg); break;
-            case 'a': config.attr_dim = atoi(optarg); break;
-            case 'n': config.num_layers = atoi(optarg); break;
-            case 'M': config.M = atoi(optarg); break;
-            case 'c': config.ef_construction = atoi(optarg); break;
-            case 'x': config.cross_edge_count = atoi(optarg); break;
-            case 'r': config.rebuild_index = true; break;
-            case 'h':
-                print_usage(argv[0]);
-                return 0;
-            default:
-                print_usage(argv[0]);
-                return 1;
+            case 's':
+                if (optarg) {
+                    strcpy(source, optarg);
+                }
+                break;
+            case 'k':
+                if (optarg) K = atoi(optarg);
+                break;
         }
     }
+    sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
+    sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
+    sprintf(groundtruth_path, "%s%s_groundtruth.ivecs", source, dataset);
+    sprintf(meta_path, "%s%s_metadata_uniform_2d.bin", source, dataset);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%d.log", K, dataset, dataset, 0);
+    sprintf(index_path, "%s%s.cube", source, dataset);
+    Matrix<float> X(data_path);
+    Matrix<float> Q(query_path);
+    hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X.data;
 
-    // Validate required arguments
-    if (config.base_file.empty() || config.query_file.empty() ||
-        config.metadata_file.empty() || config.groundtruth_file.empty() ||
-        config.output_file.empty()) {
-        cerr << "Error: Missing required arguments" << endl;
-        print_usage(argv[0]);
-        return 1;
-    }
+    size_t num_layers = 3;
+    size_t M = 16;
+    size_t ef_construction = 200;
+    size_t cross_edge_count = 2;
 
-    cout << "=== Hierarchical Cube Index Benchmark ===" << endl;
-    cout << "Base file: " << config.base_file << endl;
-    cout << "Query file: " << config.query_file << endl;
-    cout << "Metadata file: " << config.metadata_file << endl;
-    cout << "Groundtruth file: " << config.groundtruth_file << endl;
-    cout << "Output file: " << config.output_file << endl;
-    cout << "Attr dim: " << config.attr_dim << endl;
-    cout << "Num layers: " << config.num_layers << endl;
-    cout << "M: " << config.M << endl;
-    cout << "ef_construction: " << config.ef_construction << endl;
-    cout << "Cross edges: " << config.cross_edge_count << endl;
-    cout << endl;
+    auto start = chrono::high_resolution_clock::now();
+    IndexCube index(num_layers, M, ef_construction, cross_edge_count);
+    index.build_index(data_path, meta_path);
+    auto end = chrono::high_resolution_clock::now();
+    auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+    cout << "Index built in " << build_time << " ms" << endl;
 
-    try {
-        // Load base vectors to get dimension
-        char* base_file_cstr = const_cast<char*>(config.base_file.c_str());
-        Matrix<float> X(base_file_cstr);
-        size_t vec_dim = X.d;
-        size_t num_vectors = X.n;
+//    vector<BoundingBox> filters;
+//    cout << "Generating random filters (ratio=" << FILTER_RATIO << ", seed=42)..." << endl;
+//    mt19937 rng(42);
+//    BoundingBox global_bbox = index.get_global_bbox();
+//    for (size_t i = 0; i < Q.n; i++) {
+//        filters.push_back(generate_filter_bbox(global_bbox, FILTER_RATIO, index.get_meta_dim(), rng));
+//    }
+//    cout << "  Generated " << filters.size() << " filters" << endl;
+//
+//
+//    cout << "Computing filtered groundtruth (k=" << subk << ")..." << endl;
+//    Matrix<int> G = compute_filtered_gt(Q, X, filters,
+//                                        index.get_metadata(),
+//                                        index.get_meta_dim(), subk);
+//    cout << "  Done." << endl;
 
-        cout << "Loaded " << num_vectors << " vectors of dimension " << vec_dim << endl;
-
-        // Create L2 space
-        L2Space l2space(vec_dim);
-
-        // Build or load index
-        cout << endl;
-        cout << "Building hierarchical index..." << endl;
-        auto start = chrono::high_resolution_clock::now();
-
-        IndexCube index(&l2space, vec_dim, config.attr_dim, config.num_layers,
-                       config.M, config.ef_construction, config.cross_edge_count);
-        index.build_index(config.base_file, config.metadata_file);
-
-        auto end = chrono::high_resolution_clock::now();
-        auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-
-        cout << "Index built in " << build_time << " ms" << endl;
-
-        // Print layer information
-        cout << endl;
-        cout << "=== Layer Information ===" << endl;
-        for (size_t layer_id = 0; layer_id < index.get_num_layers(); layer_id++) {
-            size_t cubes_per_dim, total_cubes;
-            index.get_layer_info(layer_id, cubes_per_dim, total_cubes);
-            cout << "Layer " << layer_id << ": " << cubes_per_dim << "^" << config.attr_dim
-                 << " = " << total_cubes << " cubes" << endl;
-        }
-        cout << endl;
-
-        // Run benchmark
-        run_benchmark(index, config);
-
-        cout << "Benchmark completed successfully!" << endl;
-        return 0;
-
-    } catch (const exception& e) {
-        cerr << "Error: " << e.what() << endl;
-        return 1;
-    }
+    Matrix<unsigned> G(groundtruth_path);
+    vector<std::priority_queue<std::pair<float, labeltype >>> answers;
+    freopen(result_path, "a", stdout);
+    get_gt(Q, X, G, answers, subk);
+    test_vs_recall(Q.data, X.n, Q.n, index, Q.d, answers, subk);
+    return 0;
 }
-

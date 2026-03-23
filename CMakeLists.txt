@@ -17,6 +17,15 @@ else()
     message(FATAL_ERROR "no OpenMP supprot")
 endif()
 
+
+find_package(Boost COMPONENTS REQUIRED program_options filesystem)
+message(STATUS "Boost_INCLUDE_DIRS: ${Boost_INCLUDE_DIRS}")
+if (Boost_FOUND)
+    include_directories(${Boost_INCLUDE_DIR})
+else()
+    message(FATAL_ERROR "no Boost supprot")
+endif()
+
 # Main library
 add_library(filtered_knn INTERFACE)
 target_include_directories(filtered_knn INTERFACE

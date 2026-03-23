@@ -54,7 +54,12 @@ for K in {20,100}; do
 
   done
 done
-#
-## Generate QPS-Recall visualization
-#echo "Generating QPS-Recall curves..."
-#python3 scripts/visualize_qps_recall.py
+
+for K in {20,100}; do
+  for data in "${datasets[@]}"; do
+    echo "Searching - ${data}"
+
+    ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -k ${K}
+
+  done
+done

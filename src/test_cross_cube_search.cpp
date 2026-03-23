@@ -159,7 +159,7 @@ int main(int argc, char *argv[]) {
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
     sprintf(groundtruth_path, "%s%s_next_groundtruth.ivecs", source, dataset);
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-next-merge%d.log", K, dataset, dataset, CUBE);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge%d.log", K, dataset, dataset, CUBE);
     sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);

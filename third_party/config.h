@@ -13,7 +13,7 @@
 #define CUBE 4
 #define META_DIM 2
 #define CROSS 2
-
+#define FILTER_RATIO 0.1
 template<typename dist_t> char *hnswlib::HierarchicalNSWStatic<dist_t>::static_base_data_ = NULL;
 template<typename dist_t> char *hnswlib::HierarchicalNSWCube<dist_t>::static_base_data_ = NULL;
 #define UNLIKELY(x) __builtin_expect(x, 0)

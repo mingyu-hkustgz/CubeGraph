@@ -68,16 +68,9 @@ int main(int argc, char *argv[]) {
     L2Space l2space(D);
     auto *appr_alg = new HierarchicalNSWCube<float>(&l2space, N, META_DIM, CUBE, CROSS, HNSW_M, HNSW_efConstruction);
 
-    // Add first point
-    for (int i = 0; i < CUBE; i++) {
-        std::vector<hnswlib::metatype> meta(META_DIM);
-        meta[0] = (float)i;
-        appr_alg->addCubePoint(X->data, i, i % CUBE, meta.data());
-    }
-
     unsigned check_tag = 1;
 #pragma omp parallel for schedule(dynamic, 144)
-    for (int i = CUBE; i < N; i++) {
+    for (int i = 0; i < N; i++) {
         std::vector<hnswlib::metatype> meta(META_DIM);
         meta[0] = (float)i;
         appr_alg->addCubePoint(X->data + i * D, i, i % CUBE, meta.data());

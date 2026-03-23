@@ -38,3 +38,7 @@ Makefile
 /docs/MULTIDIM_INDEX.md
 /CLAUDE.md
 /docs/CUBE_REFINEMENT_SUMMARY.md
+/docs
+/visualizations/*
+/scripts
+/scripts/*
