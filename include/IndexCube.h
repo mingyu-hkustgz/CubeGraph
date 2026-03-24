@@ -9,6 +9,7 @@
 #include <fstream>
 #include <queue>
 #include <omp.h>
+
 #define MAX_DIM 16
 
 // Multi-dimensional bounding box
@@ -45,11 +46,22 @@ struct BoundingBox {
     }
 };
 
-// Layer selection strategy
-enum class LayerSelectionStrategy {
-    RANGE_SIZE,      // Match filter range size to cube size
-    EXPLICIT,        // User specifies layer_id directly
-    SELECTIVITY      // Based on filter selectivity (volume ratio)
+// N-dimensional sphere (for radius filters)
+struct Sphere {
+    std::vector<float> center;
+    float radius;
+
+    Sphere() : radius(0.0f) {}
+    Sphere(size_t dim) : center(dim), radius(0.0f) {}
+    Sphere(const std::vector<float>& c, float r) : center(c), radius(r) {}
+};
+
+struct RadiusFilterParams {
+    Sphere sphere;
+    size_t attr_dim;
+    RadiusFilterParams() : attr_dim(0) {}
+    RadiusFilterParams(const std::vector<float>& center, float radius, size_t attr_dim)
+        : sphere(center, radius), attr_dim(attr_dim) {}
 };
 
 class IndexCube {
@@ -70,8 +82,26 @@ private:
     BoundingBox global_bbox_;
     size_t attr_dim_, vec_dim_, num_vectors_, num_layers_;
     size_t M_, ef_construction_, cross_edge_count_;
-    bool verbose = true;
+    bool verbose = false;
     float *data_;
+
+    // Compute squared distance from a point to the closest point in a cube's bounding box
+    float dist2_point_to_cube_bbox(const std::vector<float>& point, const BoundingBox& cube_bbox) const {
+        float d2 = 0.0f;
+        for (size_t d = 0; d < attr_dim_; d++) {
+            float coord = point[d];
+            float closest = coord;
+            if (coord < cube_bbox.min_bounds[d]) {
+                closest = cube_bbox.min_bounds[d];
+            } else if (coord > cube_bbox.max_bounds[d]) {
+                closest = cube_bbox.max_bounds[d];
+            }
+            float diff = coord - closest;
+            d2 += diff * diff;
+        }
+        return d2;
+    }
+
 public:
     // Constructor
     IndexCube(size_t num_layers = 3,
@@ -273,7 +303,7 @@ public:
             {
                 check_tag++;
                 if (check_tag % report == 0) {
-                    std::cerr << "Processing Index - " << check_tag << " / " << num_vectors_ << std::endl;
+                    std::cerr << "Processing Cross - " << check_tag << " / " << num_vectors_ << std::endl;
                 }
             }
         }
@@ -306,20 +336,12 @@ public:
     }
 
 
-    // Layer selection: explicit layer ID
-    size_t select_layer_explicit(size_t layer_id) const {
-        if (layer_id >= layers_.size()) {
-            throw std::runtime_error("Invalid layer_id");
-        }
-        return layer_id;
-    }
-
-
     // Filter functor: admits only points whose metadata lies within filter_bbox
     class BBoxFilter : public hnswlib::BaseFilterFunctor {
+    public:
         const BoundingBox &bbox_;
         size_t attr_dim_;
-    public:
+
         BBoxFilter(const BoundingBox &bbox, size_t attr_dim)
                 : bbox_(bbox), attr_dim_(attr_dim) {}
 
@@ -333,19 +355,196 @@ public:
         }
     };
 
+    // Filter functor: admits only points whose metadata lies within radius of sphere center
+    class RadiusFilter : public hnswlib::BaseFilterFunctor {
+    public:
+        const Sphere& sphere_;
+        size_t attr_dim_;
+
+        RadiusFilter(const Sphere& sphere, size_t attr_dim)
+            : sphere_(sphere), attr_dim_(attr_dim) {}
+
+        bool operator()(hnswlib::metatype *meta) override {
+            float d2 = 0.0f;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                float diff = meta[d] - sphere_.center[d];
+                d2 += diff * diff;
+            }
+            return d2 <= sphere_.radius * sphere_.radius;
+        }
+    };
+
+    size_t select_layer_with_BBox(const BoundingBox *filter_bbox = nullptr) const {
+        if(filter_bbox== nullptr) return 0;
+        size_t target_layer = 0;
+        while (target_layer < layers_.size()) {
+            for (int i = 0; i < attr_dim_; i++) {
+                auto edge_length = filter_bbox->max_bounds[i]-filter_bbox->min_bounds[i];
+                if(edge_length > layers_[target_layer].cube_width[i]){
+                    return target_layer;
+                }
+            }
+            target_layer++;
+        }
+        target_layer--;
+        return target_layer;
+    }
+
+    int find_cube_with_BBox(size_t layer_id, const BoundingBox *filter_bbox = nullptr) const {
+        if (filter_bbox == nullptr) return 0;
+        const auto &layer = layers_[layer_id];
+
+        // Compute center of filter_bbox
+        std::vector<float> center(attr_dim_);
+        for (size_t d = 0; d < attr_dim_; d++) {
+            center[d] = (filter_bbox->min_bounds[d] + filter_bbox->max_bounds[d]) / 2.0f;
+        }
+        // Compute cube ID for the center point
+        return static_cast<int>(compute_cube_id(center, layer));
+    }
+
+
+    std::vector<int> find_cube_list_with_BBox(size_t layer_id, const BoundingBox *filter_bbox = nullptr) const {
+        if (filter_bbox == nullptr) return {};
+
+        const auto &layer = layers_[layer_id];
+        std::vector<int> result;
+        std::vector<char> visited(layer.total_cubes, 0);
+
+        // Start from central cube
+        int start_cube = find_cube_with_BBox(layer_id, filter_bbox);
+        std::queue<int> bfs_queue;
+        bfs_queue.push(start_cube);
+        visited[start_cube] = 1;
+
+        while (!bfs_queue.empty()) {
+            int current_cube = bfs_queue.front();
+            bfs_queue.pop();
+
+            // Get cube bounding box
+            BoundingBox cube_bbox(attr_dim_);
+            size_t coords[MAX_DIM];
+            decode_cube_id(current_cube, layer, coords);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                cube_bbox.min_bounds[d] = layer.global_bbox.min_bounds[d] + coords[d] * layer.cube_width[d];
+                cube_bbox.max_bounds[d] = cube_bbox.min_bounds[d] + layer.cube_width[d];
+            }
+
+            // Check overlap with filter_bbox
+            if (cube_bbox.overlaps(*filter_bbox)) {
+                result.push_back(current_cube);
+
+                // Explore adjacent cubes
+                for (int neighbor : layer.adjacent_cubes[current_cube]) {
+                    if (!visited[neighbor]) {
+                        visited[neighbor] = 1;
+                        bfs_queue.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // Select layer based on sphere radius vs cube diagonal
+    size_t select_layer_with_Radius(const RadiusFilterParams* filter_radius = nullptr) const {
+        if (filter_radius == nullptr) return 0;
+        size_t target_layer = 0;
+        float radius = filter_radius->sphere.radius;
+        while (target_layer < layers_.size()) {
+            // Compute diagonal of cube at this layer
+            float diagonal2 = 0.0f;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                diagonal2 += layers_[target_layer].cube_width[d] * layers_[target_layer].cube_width[d];
+            }
+            float diagonal = std::sqrt(diagonal2);
+            // If sphere fits entirely within cube, we might need finer layer
+            // If sphere is larger than cube, we need coarser layer
+            if (radius > diagonal) {
+                return target_layer;
+            }
+            target_layer++;
+        }
+        target_layer--;
+        return target_layer;
+    }
+
+    int find_cube_with_Radius(size_t layer_id, const RadiusFilterParams* filter_radius = nullptr) const {
+        if (filter_radius == nullptr) return 0;
+        const auto& layer = layers_[layer_id];
+        // Compute cube ID for the sphere center
+        return static_cast<int>(compute_cube_id(filter_radius->sphere.center, layer));
+    }
+
+    std::vector<int> find_cube_list_with_Radius(size_t layer_id, const RadiusFilterParams* filter_radius = nullptr) const {
+        if (filter_radius == nullptr) return {};
+
+        const auto& layer = layers_[layer_id];
+        const Sphere& sphere = filter_radius->sphere;
+        float radius2 = sphere.radius * sphere.radius;
+
+        std::vector<int> result;
+        std::vector<char> visited(layer.total_cubes, 0);
+
+        // Start from cube containing sphere center
+        int start_cube = find_cube_with_Radius(layer_id, filter_radius);
+        std::queue<int> bfs_queue;
+        bfs_queue.push(start_cube);
+        visited[start_cube] = 1;
+
+        while (!bfs_queue.empty()) {
+            int current_cube = bfs_queue.front();
+            bfs_queue.pop();
+
+            // Get cube bounding box
+            BoundingBox cube_bbox(attr_dim_);
+            size_t coords[MAX_DIM];
+            decode_cube_id(current_cube, layer, coords);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                cube_bbox.min_bounds[d] = layer.global_bbox.min_bounds[d] + coords[d] * layer.cube_width[d];
+                cube_bbox.max_bounds[d] = cube_bbox.min_bounds[d] + layer.cube_width[d];
+            }
+
+            // Check if sphere intersects cube (distance from sphere center to cube <= radius)
+            float d2 = dist2_point_to_cube_bbox(sphere.center, cube_bbox);
+            if (d2 <= radius2) {
+                result.push_back(current_cube);
+
+                // Explore adjacent cubes
+                for (int neighbor : layer.adjacent_cubes[current_cube]) {
+                    if (!visited[neighbor]) {
+                        visited[neighbor] = 1;
+                        bfs_queue.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+
     // Main search method
     std::priority_queue<std::pair<float, hnswlib::labeltype>>
-    search(const float *query_vector, size_t k, size_t explicit_layer_id = 0, size_t ef = 100,
+    fly_search(const float *query_vector, size_t k,
            const BoundingBox *filter_bbox = nullptr) {
-        auto layer_id = select_layer_explicit(explicit_layer_id);
+        auto layer_id = select_layer_with_BBox(filter_bbox);
         const auto &layer = layers_[layer_id];
-        // Set ef parameter
-//        layer.hnsw_index->setEf(ef);
-        std::vector<hnswlib::tableint> cubelist;
-        for (int i = 0; i < layer.total_cubes; i++) cubelist.push_back(i);
-        // Search with in-traversal filter — only admits points inside filter_bbox
-//        BBoxFilter bbox_filter(filter_bbox, attr_dim_);
-        return layer.hnsw_index->searchCubeKnn(query_vector, k, cubelist);
+        BBoxFilter bbox_filter(*filter_bbox, attr_dim_);
+        auto cube_id = find_cube_with_BBox(layer_id, filter_bbox);
+        return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &bbox_filter);
+    }
+
+    // Radius-filtered search method
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    fly_search(const float *query_vector, size_t k,
+           const RadiusFilterParams* filter_radius) {
+        auto layer_id = select_layer_with_Radius(filter_radius);
+        const auto &layer = layers_[layer_id];
+        RadiusFilter radius_filter(filter_radius->sphere, filter_radius->attr_dim);
+        auto cube_id = find_cube_with_Radius(layer_id, filter_radius);
+        return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &radius_filter);
     }
 
     // Get global bounding box

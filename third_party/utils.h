@@ -112,8 +112,6 @@ double Ratio(std::priority_queue<std::pair<float, hnswlib::labeltype >> result,
         ratio += (result.top().first / gt.top().first);
         gt.pop();
         result.pop();
-        //std::cerr<<gt.top().second<<" "<<result.top().second<<std::endl;
-        //std::cerr<<((double)result.top().first/(double)gt.top().first)<<" "<<result.top().first<<" "<<gt.top().first<<std::endl;
         count+=1.0;
     }
     ratio /= count;

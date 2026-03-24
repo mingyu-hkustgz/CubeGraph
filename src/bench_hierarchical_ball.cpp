@@ -23,28 +23,27 @@ const int MAXK = 100;
 int efSearch = 20;
 double outer_recall = 0;
 
-// Generate filter bounding box centered at a random point
-BoundingBox generate_filter_bbox(const BoundingBox &global_bbox, float filter_ratio, size_t attr_dim, mt19937 &rng) {
-    BoundingBox filter_bbox(attr_dim);
+// Generate filter radius (sphere) centered at a random point
+RadiusFilterParams generate_filter_radius(const BoundingBox &global_bbox, float filter_ratio, size_t attr_dim, mt19937 &rng) {
+    std::vector<float> center(attr_dim);
+    float max_range = 0.0f;
 
     for (size_t d = 0; d < attr_dim; d++) {
         float range = global_bbox.max_bounds[d] - global_bbox.min_bounds[d];
-        float filter_size = range * sqrt(filter_ratio);  // sqrt for 2D to get linear dimension
-
+        max_range = std::max(max_range, range);
         // Random center within valid range
         uniform_real_distribution<float> dist(
-                global_bbox.min_bounds[d] + filter_size / 2,
-                global_bbox.max_bounds[d] - filter_size / 2
+                global_bbox.min_bounds[d] + range * 0.1f,
+                global_bbox.max_bounds[d] - range * 0.1f
         );
-        float center = dist(rng);
-
-        filter_bbox.min_bounds[d] = center - filter_size / 2;
-        filter_bbox.max_bounds[d] = center + filter_size / 2;
+        center[d] = dist(rng);
     }
 
-    return filter_bbox;
-}
+    // Radius based on filter_ratio (fraction of max range)
+    float radius = max_range * sqrt(filter_ratio) / 2.0f;
 
+    return RadiusFilterParams(center, radius, attr_dim);
+}
 
 
 template<typename GT>
@@ -61,9 +60,9 @@ get_gt(Matrix<float> &Q, Matrix<float> &X, GT G, vector<std::priority_queue<std:
     }
 }
 
-static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
+static void test_approx_radius(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
                         vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
-                        vector<BoundingBox> &filters) {
+                        vector<RadiusFilterParams> &filters) {
     size_t correct = 0;
     size_t total = 0;
     long double total_time = 0;
@@ -99,9 +98,9 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &a
     return;
 }
 
-static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
+static void test_vs_recall_radius(float *massQ, size_t vecsize, size_t qsize, IndexCube &appr_alg, size_t vecdim,
                            vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
-                           vector<BoundingBox> &filters) {
+                           vector<RadiusFilterParams> &filters) {
     vector<size_t> efs;
     unsigned efBase = efSearch;
     for (int i = 0; i < 15; i++) {
@@ -110,20 +109,16 @@ static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, IndexCube
     }
     for (size_t ef: efs) {
         appr_alg.set_global_ef(ef);
-        test_approx(massQ, vecsize, qsize, appr_alg, vecdim, answers, k, filters);
+        test_approx_radius(massQ, vecsize, qsize, appr_alg, vecdim, answers, k, filters);
         if (outer_recall > 99.5) break;
     }
 }
 
-
-// Compute filtered groundtruth: for each query, find top-k L2 nearest base vectors
-// among those whose metadata lies within the query's random bounding-box filter.
-// Returns Matrix<int> G where G.data[G.d * q + r] = ID of r-th nearest neighbor
-// for query q (same layout as ivecs-loaded Matrix<unsigned>).
-static Matrix<int> compute_filtered_gt(
+// Compute filtered groundtruth with radius (sphere) filter
+static Matrix<int> compute_filtered_gt_radius(
         Matrix<float> &Q,
         Matrix<float> &X_base,
-        const std::vector<BoundingBox> &filters,
+        const std::vector<RadiusFilterParams> &filters,
         const std::vector<std::vector<float>> &metadata,
         size_t attr_dim,
         size_t k) {
@@ -131,22 +126,23 @@ static Matrix<int> compute_filtered_gt(
 #pragma omp parallel for schedule(dynamic, 144)
     for (size_t i = 0; i < Q.n; i++) {
         const float *query = Q.data + i * Q.d;
-        const BoundingBox &fb = filters[i];
+        const RadiusFilterParams &fr = filters[i];
+        const Sphere &sphere = fr.sphere;
+        float radius2 = sphere.radius * sphere.radius;
 
         // Pass 1: collect indices of base vectors passing the filter
         std::vector<size_t> passed;
         passed.reserve(X_base.n);
         for (size_t j = 0; j < X_base.n; j++) {
             const float *meta = metadata[j].data();
-            bool ok = true;
+            float d2 = 0.0f;
             for (size_t d = 0; d < attr_dim; d++) {
-                float v = meta[d];
-                if (v < fb.min_bounds[d] || v > fb.max_bounds[d]) {
-                    ok = false;
-                    break;
-                }
+                float diff = meta[d] - sphere.center[d];
+                d2 += diff * diff;
             }
-            if (ok) passed.push_back(j);
+            if (d2 <= radius2) {
+                passed.push_back(j);
+            }
         }
 
         // Pass 2: compute L2 distances and find top-k
@@ -169,7 +165,6 @@ static Matrix<int> compute_filtered_gt(
                 float d = sqr_dist(query, X_base.data + idx * X_base.d, Q.d);
                 dists.emplace_back(d, idx);
             }
-            // O(n) partial sort: nth_element to find top-k, then sort top-k
             std::nth_element(dists.begin(), dists.begin() + k, dists.end(),
                              [](const auto &a, const auto &b) { return a.first < b.first; });
             std::sort(dists.begin(), dists.begin() + k,
@@ -180,7 +175,6 @@ static Matrix<int> compute_filtered_gt(
     }
     return G;
 }
-
 
 int main(int argc, char *argv[]) {
 
@@ -251,34 +245,34 @@ int main(int argc, char *argv[]) {
     auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     cout << "Index built in " << build_time << " ms" << endl;
 
-    vector<BoundingBox> filters;
-    cout << "Generating random filters (ratio=" << FILTER_RATIO << ", seed=42)..." << endl;
+    // Test with radius filters
+    vector<RadiusFilterParams> radius_filters;
+    cout << "Generating random radius filters (ratio=" << FILTER_RATIO << ", seed=42)..." << endl;
     mt19937 rng(42);
     BoundingBox global_bbox = index.get_global_bbox();
     for (size_t i = 0; i < Q.n; i++) {
-        filters.push_back(generate_filter_bbox(global_bbox, FILTER_RATIO, index.get_meta_dim(), rng));
+        radius_filters.push_back(generate_filter_radius(global_bbox, FILTER_RATIO, index.get_meta_dim(), rng));
     }
-    cout << "  Generated " << filters.size() << " filters" << endl;
+    cout << "  Generated " << radius_filters.size() << " radius filters" << endl;
 
-
-    cout << "Computing filtered groundtruth (k=" << 100 << ")..." << endl;
-    Matrix<int> G = compute_filtered_gt(Q, X, filters,
+    cout << "Computing radius-filtered groundtruth (k=" << 100 << ")..." << endl;
+    Matrix<int> G_radius = compute_filtered_gt_radius(Q, X, radius_filters,
                                         index.get_metadata(),
                                         index.get_meta_dim(), 100);
     cout << "  Done." << endl;
 
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;
     K = 20;
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-radius-%.2f.log", K, dataset, dataset, FILTER_RATIO);
     freopen(result_path, "a", stdout);
-    get_gt(Q, X, G, answers, K);
-    test_vs_recall(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);
+    get_gt(Q, X, G_radius, answers, K);
+    test_vs_recall_radius(Q.data, X.n, Q.n, index, Q.d, answers, K, radius_filters);
     answers.clear();
     K = 100;
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-radius-%.2f.log", K, dataset, dataset, FILTER_RATIO);
     freopen(result_path, "a", stdout);
-    get_gt(Q, X, G, answers, K);
-    test_vs_recall(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);
+    get_gt(Q, X, G_radius, answers, K);
+    test_vs_recall_radius(Q.data, X.n, Q.n, index, Q.d, answers, K, radius_filters);
 
     return 0;
 }
