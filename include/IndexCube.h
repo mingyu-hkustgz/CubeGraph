@@ -82,6 +82,7 @@ private:
     BoundingBox global_bbox_;
     size_t attr_dim_, vec_dim_, num_vectors_, num_layers_;
     size_t M_, ef_construction_, cross_edge_count_;
+    size_t min_points_per_cube_;
     bool verbose = false;
     float *data_;
 
@@ -107,12 +108,14 @@ public:
     IndexCube(size_t num_layers = 3,
               size_t M = 16,
               size_t ef_construction = 200,
-              size_t cross_edge_count = 2) :
+              size_t cross_edge_count = 2,
+              size_t min_points_per_cube = 50) :
             num_layers_(num_layers),
             M_(M),
             ef_construction_(ef_construction),
             cross_edge_count_(cross_edge_count),
-            num_vectors_(0) {};
+            num_vectors_(0),
+            min_points_per_cube_(min_points_per_cube) {};
 
     // Destructor
     ~IndexCube() {
@@ -275,11 +278,22 @@ public:
         // Create HNSW-CUBE index
         layer.hnsw_index = new hnswlib::HierarchicalNSWCube<float>(space, num_vectors_, attr_dim_, layer.total_cubes,
                                                                    cross_edge_count_, M_, ef_construction_);
+        std::cerr << "layer.hnsw_index->size_links_level0_ = " << layer.hnsw_index->size_links_level0_ << std::endl;
+        std::cerr << "layer.hnsw_index->size_adja_per_element_ = " << layer.hnsw_index->size_adja_per_element_ << std::endl;
+        std::cerr << "layer.hnsw_index->size_meta_per_element_ = " << layer.hnsw_index->size_meta_per_element_ << std::endl;
+        std::cerr << "layer.hnsw_index->offset_cross_level0_ = " << layer.hnsw_index->offset_cross_level0_ << std::endl;
+        std::cerr << "layer.hnsw_index->label_offset_ = " << layer.hnsw_index->label_offset_ << std::endl;
+        std::cerr << "layer.hnsw_index->cube_offset_ = " << layer.hnsw_index->cube_offset_ << std::endl;
+        std::cerr << "layer.hnsw_index->meta_offset_level0_ = " << layer.hnsw_index->meta_offset_level0_ << std::endl;
+        std::cerr << "layer.hnsw_index->offsetLevel0_ = " << layer.hnsw_index->offsetLevel0_ << std::endl;
+        std::cerr << "layer.hnsw_index->Number vectors = " << layer.hnsw_index->cur_element_count << std::endl;
         int check_tag = 0, report = 200000;
 #pragma omp parallel for schedule(dynamic, 144)
         for (size_t i = 0; i < num_vectors_; i++) {
             size_t cube_id = compute_cube_id(metadata_[i], layer);
+            assert(cube_id < layer.total_cubes);
             layer.hnsw_index->addCubePoint(data_ + i * vec_dim_, i, cube_id, metadata_[i].data());
+            assert(layer.hnsw_index->getCubeId(i) < layer.total_cubes);
 #pragma omp critical
             {
                 check_tag++;
@@ -299,6 +313,7 @@ public:
 #pragma omp parallel for schedule(dynamic, 144)
         for (size_t i = 0; i < num_vectors_; i++) {
             layer.hnsw_index->addCrossCubelinks(i);
+            assert(layer.hnsw_index->getCubeId(i) < layer.total_cubes);
 #pragma omp critical
             {
                 check_tag++;
@@ -308,6 +323,29 @@ public:
             }
         }
         layers_.push_back(layer);
+    }
+
+    // Compute adaptive number of layers based on minimum points per cube
+    // Stops when points_per_cube would fall below min_points_per_cube_
+    size_t compute_adaptive_num_layers() const {
+        size_t adaptive_layers = 0;
+        size_t cubes_per_dim = 2;  // layer 0 has 2^1 = 2 cubes per dim
+        while (true) {
+            size_t total_cubes = 1;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                total_cubes *= cubes_per_dim;
+            }
+            double points_per_cube = static_cast<double>(num_vectors_) / total_cubes;
+            if (points_per_cube < min_points_per_cube_ && adaptive_layers > 0) {
+                break;
+            }
+            adaptive_layers++;
+            if (adaptive_layers >= num_layers_) {
+                break;
+            }
+            cubes_per_dim *= 2;
+        }
+        return adaptive_layers;
     }
 
     // Build all layers and cross-cube edges
@@ -322,13 +360,21 @@ public:
         num_vectors_ = X->n;
         vec_dim_ = X->d;
         space = new hnswlib::L2Space(X->d);
-        std::cout << "Building " << num_layers_ << " layers..." << std::endl;
-        for (size_t layer_id = 0; layer_id < num_layers_; layer_id++) {
+
+        // Compute adaptive number of layers
+        size_t adaptive_layers = compute_adaptive_num_layers();
+        std::cout << "Adaptive layers: " << adaptive_layers
+                  << " (min points/cube: " << min_points_per_cube_ << ")" << std::endl;
+        std::cout << "Building " << adaptive_layers << " layers..." << std::endl;
+        num_layers_ = adaptive_layers;
+        for (size_t layer_id = 0; layer_id < adaptive_layers; layer_id++) {
             std::cout << "Building layer " << layer_id << "..." << std::endl;
             build_layer(layer_id);
+            size_t points_per_cube = num_vectors_ / layers_[layer_id].total_cubes;
             std::cout << "Layer " << layer_id << " built: "
                       << layers_[layer_id].cubes_per_dim << "^" << attr_dim_
-                      << " = " << layers_[layer_id].total_cubes << " cubes" << std::endl;
+                      << " = " << layers_[layer_id].total_cubes << " cubes"
+                      << " (" << points_per_cube << " points/cube)" << std::endl;
 
         }
 
@@ -404,11 +450,11 @@ public:
     }
 
 
-    std::vector<int> find_cube_list_with_BBox(size_t layer_id, const BoundingBox *filter_bbox = nullptr) const {
+    std::vector<hnswlib::tableint> find_cube_list_with_BBox(size_t layer_id, const BoundingBox *filter_bbox = nullptr) const {
         if (filter_bbox == nullptr) return {};
 
         const auto &layer = layers_[layer_id];
-        std::vector<int> result;
+        std::vector<hnswlib::tableint> result;
         std::vector<char> visited(layer.total_cubes, 0);
 
         // Start from central cube
@@ -477,14 +523,14 @@ public:
         return static_cast<int>(compute_cube_id(filter_radius->sphere.center, layer));
     }
 
-    std::vector<int> find_cube_list_with_Radius(size_t layer_id, const RadiusFilterParams* filter_radius = nullptr) const {
+    std::vector<hnswlib::tableint> find_cube_list_with_Radius(size_t layer_id, const RadiusFilterParams* filter_radius = nullptr) const {
         if (filter_radius == nullptr) return {};
 
         const auto& layer = layers_[layer_id];
         const Sphere& sphere = filter_radius->sphere;
         float radius2 = sphere.radius * sphere.radius;
 
-        std::vector<int> result;
+        std::vector<hnswlib::tableint> result;
         std::vector<char> visited(layer.total_cubes, 0);
 
         // Start from cube containing sphere center
@@ -525,7 +571,7 @@ public:
     }
 
 
-    // Main search method
+    // Main search method (fly search - traverses adjacent cubes)
     std::priority_queue<std::pair<float, hnswlib::labeltype>>
     fly_search(const float *query_vector, size_t k,
            const BoundingBox *filter_bbox = nullptr) {
@@ -536,15 +582,37 @@ public:
         return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &bbox_filter);
     }
 
+    // Predetermined search method (searches fixed cube list)
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    predetermined_search(const float *query_vector, size_t k,
+           const BoundingBox *filter_bbox = nullptr) {
+        auto layer_id = select_layer_with_BBox(filter_bbox);
+        const auto &layer = layers_[layer_id];
+        BBoxFilter bbox_filter(*filter_bbox, attr_dim_);
+        std::vector<hnswlib::tableint> cube_list = find_cube_list_with_BBox(layer_id, filter_bbox);
+        return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &bbox_filter);
+    }
+
     // Radius-filtered search method
     std::priority_queue<std::pair<float, hnswlib::labeltype>>
     fly_search(const float *query_vector, size_t k,
-           const RadiusFilterParams* filter_radius) {
+           const RadiusFilterParams* filter_radius = nullptr) {
         auto layer_id = select_layer_with_Radius(filter_radius);
         const auto &layer = layers_[layer_id];
         RadiusFilter radius_filter(filter_radius->sphere, filter_radius->attr_dim);
         auto cube_id = find_cube_with_Radius(layer_id, filter_radius);
         return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &radius_filter);
+    }
+
+    // Predetermined radius search method
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    predetermined_search(const float *query_vector, size_t k,
+           const RadiusFilterParams* filter_radius = nullptr) {
+        auto layer_id = select_layer_with_Radius(filter_radius);
+        const auto &layer = layers_[layer_id];
+        RadiusFilter radius_filter(filter_radius->sphere, filter_radius->attr_dim);
+        std::vector<hnswlib::tableint> cube_list = find_cube_list_with_Radius(layer_id, filter_radius);
+        return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &radius_filter);
     }
 
     // Get global bounding box
@@ -559,5 +627,180 @@ public:
 
     // Get metadata vectors
     const std::vector<std::vector<float>> &get_metadata() const { return metadata_; }
+
+    // Save index to file
+    void save_index(const std::string &path) {
+        std::ofstream output(path, std::ios::binary);
+        if (!output.is_open()) {
+            throw std::runtime_error("Cannot open index file for writing: " + path);
+        }
+
+        // Save header metadata
+        size_t actual_layers = layers_.size();
+        hnswlib::writeBinaryPOD(output, actual_layers);  // actual number of layers built
+        hnswlib::writeBinaryPOD(output, M_);
+        hnswlib::writeBinaryPOD(output, ef_construction_);
+        hnswlib::writeBinaryPOD(output, cross_edge_count_);
+        hnswlib::writeBinaryPOD(output, attr_dim_);
+        hnswlib::writeBinaryPOD(output, vec_dim_);
+        hnswlib::writeBinaryPOD(output, num_vectors_);
+        hnswlib::writeBinaryPOD(output, min_points_per_cube_);
+
+        // Save global_bbox_
+        hnswlib::writeBinaryPOD(output, attr_dim_);
+        for (size_t d = 0; d < attr_dim_; d++) {
+            hnswlib::writeBinaryPOD(output, global_bbox_.min_bounds[d]);
+        }
+        for (size_t d = 0; d < attr_dim_; d++) {
+            hnswlib::writeBinaryPOD(output, global_bbox_.max_bounds[d]);
+        }
+
+        // Save metadata_
+        hnswlib::writeBinaryPOD(output, num_vectors_);
+        hnswlib::writeBinaryPOD(output, attr_dim_);
+        for (size_t i = 0; i < num_vectors_; i++) {
+            output.write(reinterpret_cast<const char*>(metadata_[i].data()), attr_dim_ * sizeof(float));
+        }
+
+        // Save per-layer data
+        for (size_t layer_idx = 0; layer_idx < layers_.size(); layer_idx++) {
+            const auto &layer = layers_[layer_idx];
+
+            // Save layer metadata
+            hnswlib::writeBinaryPOD(output, layer.layer_id);
+            hnswlib::writeBinaryPOD(output, layer.cubes_per_dim);
+            hnswlib::writeBinaryPOD(output, layer.total_cubes);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::writeBinaryPOD(output, layer.cube_width[d]);
+            }
+
+            // Save adjacent_cubes
+            hnswlib::writeBinaryPOD(output, layer.total_cubes);
+            for (size_t c = 0; c < layer.total_cubes; c++) {
+                hnswlib::writeBinaryPOD(output, layer.adjacent_cubes[c].size());
+                for (const auto &adj : layer.adjacent_cubes[c]) {
+                    hnswlib::writeBinaryPOD(output, adj);
+                }
+            }
+
+            // Save global_bbox for this layer
+            hnswlib::writeBinaryPOD(output, attr_dim_);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::writeBinaryPOD(output, layer.global_bbox.min_bounds[d]);
+            }
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::writeBinaryPOD(output, layer.global_bbox.max_bounds[d]);
+            }
+
+            // Save HNSW index for this layer
+            std::string layer_path = path + ".layer_" + std::to_string(layer_idx);
+            layer.hnsw_index->saveIndex(layer_path);
+        }
+
+        output.close();
+        std::cout << "Index saved to " << path << std::endl;
+    }
+
+    // Load index from file
+    bool load_index(const std::string &path, char *data_file) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input.is_open()) {
+            return false;
+        }
+
+        // Load header metadata
+        hnswlib::readBinaryPOD(input, num_layers_);  // actual layers built
+        hnswlib::readBinaryPOD(input, M_);
+        hnswlib::readBinaryPOD(input, ef_construction_);
+        hnswlib::readBinaryPOD(input, cross_edge_count_);
+        hnswlib::readBinaryPOD(input, attr_dim_);
+        hnswlib::readBinaryPOD(input, vec_dim_);
+        hnswlib::readBinaryPOD(input, num_vectors_);
+        hnswlib::readBinaryPOD(input, min_points_per_cube_);
+
+        // Load global_bbox_
+        size_t bbox_dim;
+        hnswlib::readBinaryPOD(input, bbox_dim);
+        global_bbox_.min_bounds.resize(bbox_dim);
+        global_bbox_.max_bounds.resize(bbox_dim);
+        for (size_t d = 0; d < bbox_dim; d++) {
+            hnswlib::readBinaryPOD(input, global_bbox_.min_bounds[d]);
+        }
+        for (size_t d = 0; d < bbox_dim; d++) {
+            hnswlib::readBinaryPOD(input, global_bbox_.max_bounds[d]);
+        }
+
+        // Load metadata_
+        size_t meta_n, meta_d;
+        hnswlib::readBinaryPOD(input, meta_n);
+        hnswlib::readBinaryPOD(input, meta_d);
+        metadata_.resize(meta_n, std::vector<float>(meta_d));
+        for (size_t i = 0; i < meta_n; i++) {
+            input.read(reinterpret_cast<char*>(metadata_[i].data()), meta_d * sizeof(float));
+        }
+
+        // Load vector data (for static_base_data_)
+        auto *X = new Matrix<float>(data_file);
+        hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X->data;
+        data_ = X->data;
+        vec_dim_ = X->d;
+        space = new hnswlib::L2Space(X->d);
+
+        // Load per-layer data
+        layers_.resize(num_layers_);
+        for (size_t layer_idx = 0; layer_idx < num_layers_; layer_idx++) {
+            LayerConfig layer;
+
+            // Load layer metadata
+            hnswlib::readBinaryPOD(input, layer.layer_id);
+            hnswlib::readBinaryPOD(input, layer.cubes_per_dim);
+            hnswlib::readBinaryPOD(input, layer.total_cubes);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::readBinaryPOD(input, layer.cube_width[d]);
+            }
+
+            // Load adjacent_cubes
+            size_t total_cubes;
+            hnswlib::readBinaryPOD(input, total_cubes);
+            layer.adjacent_cubes.resize(total_cubes);
+            for (size_t c = 0; c < total_cubes; c++) {
+                size_t adj_size;
+                hnswlib::readBinaryPOD(input, adj_size);
+                layer.adjacent_cubes[c].resize(adj_size);
+                for (size_t a = 0; a < adj_size; a++) {
+                    hnswlib::readBinaryPOD(input, layer.adjacent_cubes[c][a]);
+                }
+            }
+
+            // Load global_bbox for this layer
+            size_t layer_bbox_dim;
+            hnswlib::readBinaryPOD(input, layer_bbox_dim);
+            layer.global_bbox.min_bounds.resize(layer_bbox_dim);
+            layer.global_bbox.max_bounds.resize(layer_bbox_dim);
+            for (size_t d = 0; d < layer_bbox_dim; d++) {
+                hnswlib::readBinaryPOD(input, layer.global_bbox.min_bounds[d]);
+            }
+            for (size_t d = 0; d < layer_bbox_dim; d++) {
+                hnswlib::readBinaryPOD(input, layer.global_bbox.max_bounds[d]);
+            }
+
+            // Create HNSW index and load from file
+            layer.hnsw_index = new hnswlib::HierarchicalNSWCube<float>(space, num_vectors_, attr_dim_, layer.total_cubes,
+                                                                       cross_edge_count_, M_, ef_construction_);
+
+            // Load HNSW index for this layer
+            std::string layer_path = path + ".layer_" + std::to_string(layer_idx);
+            layer.hnsw_index->loadIndex(layer_path, space, num_vectors_);
+
+            // Set adjacency (needed for search)
+            layer.hnsw_index->setAdjacentCubeIds(layer.adjacent_cubes);
+
+            layers_[layer_idx] = std::move(layer);
+        }
+
+        input.close();
+        std::cout << "Index loaded from " << path << std::endl;
+        return true;
+    }
 };
 

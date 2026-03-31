@@ -55,20 +55,29 @@ bash mkdir.sh
 #  done
 #done
 
-for K in {20,100}; do
-  for data in "${datasets[@]}"; do
-    echo "Searching - ${data}"
+for data in "${datasets[@]}"; do
+  echo "Searching - ${data} Cube"
 
-    ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -k ${K}
+  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.05
 
-  done
+  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.1
+
+  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.2
+
+  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.4
+
 done
 
-for K in {20,100}; do
-  for data in "${datasets[@]}"; do
-    echo "Searching - ${data} (ball)"
+for data in "${datasets[@]}"; do
+  echo "Searching - ${data} (ball)"
 
-    ./build/src/bench_hierarchical_ball -d ${data} -s "./DATA/${data}/"
+  ./build/src/bench_hierarchical_ball -d ${data} -s "./DATA/${data}/" -f 0.05
 
-  done
+  ./build/src/bench_hierarchical_ball -d ${data} -s "./DATA/${data}/" -f 0.1
+
+  ./build/src/bench_hierarchical_ball -d ${data} -s "./DATA/${data}/" -f 0.2
+
+  ./build/src/bench_hierarchical_ball -d ${data} -s "./DATA/${data}/" -f 0.4
+
 done
+

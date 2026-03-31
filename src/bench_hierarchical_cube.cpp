@@ -17,10 +17,18 @@
 using namespace std;
 using namespace hnswlib;
 
+static void log_index_time(const char* dataset, const char* program, long long build_time_ms) {
+    char log_path[512];
+    sprintf(log_path, "./results/time-log/%s-%s.log", dataset, program);
+    ofstream log_file(log_path, ios::app);
+    log_file << "index_time_sec: " << (build_time_ms / 1000.0) << "\n";
+    log_file.close();
+}
+
 const int MAXK = 100;
 
 
-int efSearch = 20;
+int efSearch = 100;
 double outer_recall = 0;
 
 // Generate filter bounding box centered at a random point
@@ -76,8 +84,12 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &a
         GetCurTime(&run_start);
 #endif
 
-        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.fly_search(massQ + vecdim * i, k,
-                                                                                       &filters[i]);
+        std::priority_queue<std::pair<float, labeltype >> result =
+#if USE_FLY_SEARCH
+            appr_alg.fly_search(massQ + vecdim * i, k, &filters[i]);
+#else
+            appr_alg.predetermined_search(massQ + vecdim * i, k, &filters[i]);
+#endif
 #ifndef WIN32
         GetCurTime(&run_end);
         GetTime(&run_start, &run_end, &usr_t, &sys_t);
@@ -201,6 +213,10 @@ int main(int argc, char *argv[]) {
             {"groundtruth_path",    required_argument, 0, 'g'},
             {"result_path",         required_argument, 0, 'r'},
             {"transformation_path", required_argument, 0, 't'},
+            {"meta",                required_argument, 0, 'm'},
+
+            // Filter Parameter
+            {"filter-ratio",        required_argument, 0, 'f'},
     };
 
     int ind;
@@ -215,9 +231,11 @@ int main(int argc, char *argv[]) {
     char groundtruth_path[256] = "";
     char result_path[256] = "";
     char file_type[256] = "fvecs";
+    char meta[256] = "uniform_2d";  // default metadata type
+    float filter_ratio = FILTER_RATIO;
 
     while (iarg != -1) {
-        iarg = getopt_long(argc, argv, "d:s:r", longopts, &ind);
+        iarg = getopt_long(argc, argv, "d:s:r:f:m:", longopts, &ind);
         switch (iarg) {
             case 'd':
                 if (optarg) {
@@ -229,34 +247,60 @@ int main(int argc, char *argv[]) {
                     strcpy(source, optarg);
                 }
                 break;
+            case 'f':
+                if (optarg) {
+                    filter_ratio = atof(optarg);
+                }
+                break;
+            case 'm':
+                if (optarg) {
+                    strcpy(meta, optarg);
+                }
+                break;
         }
     }
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
-    sprintf(meta_path, "%s%s_metadata_uniform_2d.bin", source, dataset);
+    sprintf(meta_path, "%s%s_metadata_%s.bin", source, dataset, meta);
     sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
     hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X.data;
 
-    size_t num_layers = 3;
+    size_t num_layers = 6;
     size_t M = 16;
     size_t ef_construction = 200;
     size_t cross_edge_count = 2;
 
-    auto start = chrono::high_resolution_clock::now();
     IndexCube index(num_layers, M, ef_construction, cross_edge_count);
-    index.build_index(data_path, meta_path);
-    auto end = chrono::high_resolution_clock::now();
-    auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    cout << "Index built in " << build_time << " ms" << endl;
+
+    if (isFileExists_ifstream(index_path)) {
+        cout << "Loading existing index from " << index_path << "..." << endl;
+        auto start = chrono::high_resolution_clock::now();
+        index.load_index(index_path, data_path);
+        auto end = chrono::high_resolution_clock::now();
+        auto load_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Index loaded in " << load_time << " ms" << endl;
+        log_index_time(dataset, "bench_hierarchical_cube", load_time);
+    } else {
+        cout << "Building new index..." << endl;
+        auto start = chrono::high_resolution_clock::now();
+        index.build_index(data_path, meta_path);
+        auto end = chrono::high_resolution_clock::now();
+        auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Index built in " << build_time << " ms" << endl;
+        log_index_time(dataset, "bench_hierarchical_cube", build_time);
+
+        cout << "Saving index to " << index_path << "..." << endl;
+        index.save_index(index_path);
+    }
 
     vector<BoundingBox> filters;
-    cout << "Generating random filters (ratio=" << FILTER_RATIO << ", seed=42)..." << endl;
+    cout << "Generating random filters (ratio=" << filter_ratio << ", seed=42)..." << endl;
     mt19937 rng(42);
     BoundingBox global_bbox = index.get_global_bbox();
     for (size_t i = 0; i < Q.n; i++) {
-        filters.push_back(generate_filter_bbox(global_bbox, FILTER_RATIO, index.get_meta_dim(), rng));
+        filters.push_back(generate_filter_bbox(global_bbox, filter_ratio, index.get_meta_dim(), rng));
     }
     cout << "  Generated " << filters.size() << " filters" << endl;
 
@@ -269,13 +313,13 @@ int main(int argc, char *argv[]) {
 
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;
     K = 20;
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
     freopen(result_path, "a", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);
     answers.clear();
     K = 100;
-    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge-layer-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
     freopen(result_path, "a", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);

@@ -194,7 +194,7 @@ namespace hnswlib {
 
         inline labeltype getExternalCubeId(tableint internal_id) const {
             labeltype return_label;
-            memcpy(&return_label, (data_level0_memory_ + internal_id * size_data_per_element_ + label_offset_ + sizeof(labeltype)), sizeof(labeltype));
+            memcpy(&return_label, (data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_), sizeof(labeltype));
             return return_label;
         }
 
@@ -214,7 +214,9 @@ namespace hnswlib {
 
         // Get pointer to cube ID (similar to getExternalLabeLp for label)
         inline labeltype getCubeId(tableint internal_id) const {
-            return (labeltype ) *(data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_);
+            labeltype return_label;
+            memcpy(&return_label, (data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_), sizeof(labeltype));
+            return return_label;
         }
 
         // Get pointer to metadata vector

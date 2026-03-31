@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <vector>
 #include <cmath>
+#include <chrono>
 
 #include "matrix.h"
 #include "utils.h"
@@ -13,6 +14,14 @@
 
 using namespace std;
 using namespace hnswlib;
+
+static void log_index_time(const char* dataset, const char* program, long long build_time_ms, int cube_count) {
+    char log_path[512];
+    sprintf(log_path, "./results/time-log/%s-%s-c%d.log", dataset, program, cube_count);
+    ofstream log_file(log_path, ios::app);
+    log_file << "index_time_sec: " << (build_time_ms / 1000.0) << "\n";
+    log_file.close();
+}
 
 
 int main(int argc, char *argv[]) {
@@ -68,6 +77,7 @@ int main(int argc, char *argv[]) {
     L2Space l2space(D);
     auto *appr_alg = new HierarchicalNSWCube<float>(&l2space, N, META_DIM, CUBE, CROSS, HNSW_M, HNSW_efConstruction);
 
+    auto start_total = chrono::high_resolution_clock::now();
     unsigned check_tag = 1;
 #pragma omp parallel for schedule(dynamic, 144)
     for (int i = 0; i < N; i++) {
@@ -104,5 +114,11 @@ int main(int argc, char *argv[]) {
 
     appr_alg->saveIndex(index_path);
     cout << "Index saved to: " << index_path << endl;
+
+    // Log index build time
+    auto end_total = chrono::high_resolution_clock::now();
+    auto total_time = chrono::duration_cast<chrono::milliseconds>(end_total - start_total).count();
+    log_index_time(dataset, "test_link_adjacent_cube", total_time, CUBE);
+
     return 0;
 }
