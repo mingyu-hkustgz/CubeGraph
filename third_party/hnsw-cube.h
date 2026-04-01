@@ -16,6 +16,85 @@ namespace hnswlib {
     typedef unsigned int linklistsizeint;
     typedef float metatype;
 
+    // Search metrics collected during search
+    struct SearchMetrics {
+        size_t layer_id = 0;
+        size_t cubes_visited = 0;
+        size_t total_cubes_in_layer = 0;
+        size_t nodes_visited = 0;
+        size_t total_nodes_in_layer = 0;
+        size_t cross_cube_edges = 0;
+        size_t distance_computations = 0;
+        size_t hops = 0;
+
+        float selectivity() const {
+            if (total_nodes_in_layer == 0) return 0.0f;
+            return static_cast<float>(nodes_visited) / static_cast<float>(total_nodes_in_layer);
+        }
+    };
+
+    // Accumulator for search metrics across multiple queries
+    struct SearchMetricsAccumulator {
+        size_t query_count = 0;
+        size_t total_layer = 0;
+        size_t total_cubes_visited = 0;
+        size_t total_cubes_in_layer = 0;
+        size_t total_nodes_visited = 0;
+        size_t total_nodes_in_layer = 0;
+        size_t total_cross_cube_edges = 0;
+        size_t total_distance_computations = 0;
+        size_t total_hops = 0;
+
+        void reset() {
+            query_count = 0;
+            total_layer = 0;
+            total_cubes_visited = 0;
+            total_cubes_in_layer = 0;
+            total_nodes_visited = 0;
+            total_nodes_in_layer = 0;
+            total_cross_cube_edges = 0;
+            total_distance_computations = 0;
+            total_hops = 0;
+        }
+
+        void add(const SearchMetrics& m) {
+            query_count++;
+            total_layer += m.layer_id;
+            total_cubes_visited += m.cubes_visited;
+            total_cubes_in_layer += m.total_cubes_in_layer;
+            total_nodes_visited += m.nodes_visited;
+            total_nodes_in_layer += m.total_nodes_in_layer;
+            total_cross_cube_edges += m.cross_cube_edges;
+            total_distance_computations += m.distance_computations;
+            total_hops += m.hops;
+        }
+
+        float avg_layer() const {
+            return query_count > 0 ? static_cast<float>(total_layer) / query_count : 0.0f;
+        }
+
+        float avg_cubes_visited() const {
+            return query_count > 0 ? static_cast<float>(total_cubes_visited) / query_count : 0.0f;
+        }
+
+        float avg_selectivity() const {
+            if (query_count == 0 || total_nodes_in_layer == 0) return 0.0f;
+            return static_cast<float>(total_nodes_visited) / static_cast<float>(total_nodes_in_layer);
+        }
+
+        float avg_cross_cube_edges() const {
+            return query_count > 0 ? static_cast<float>(total_cross_cube_edges) / query_count : 0.0f;
+        }
+
+        float avg_distance_computations() const {
+            return query_count > 0 ? static_cast<float>(total_distance_computations) / query_count : 0.0f;
+        }
+
+        float avg_hops() const {
+            return query_count > 0 ? static_cast<float>(total_hops) / query_count : 0.0f;
+        }
+    };
+
     template<typename dist_t>
     class HierarchicalNSWCube {
     public:
@@ -1032,25 +1111,18 @@ namespace hnswlib {
         // Search with explicit cube ID
         std::priority_queue<std::pair<dist_t, labeltype >>
         searchCubeKnn(const void *query_data, size_t k, std::vector<tableint> &cube_list, BaseFilterFunctor* isIdAllowed = nullptr) {
+            return searchCubeKnn(query_data, k, cube_list, isIdAllowed, nullptr);
+        }
+
+        // Search with explicit cube ID (with metrics tracking)
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchCubeKnn(const void *query_data, size_t k, std::vector<tableint> &cube_list, BaseFilterFunctor* isIdAllowed, SearchMetrics* metrics) {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
             VisitedList *vl = visited_list_pool_->getFreeVisitedList();
             vl_type *visited_array = vl->mass;
             vl_type visited_array_tag = vl->curV;
-            std::unordered_map<tableint, uint64_t> neighbor_mp;
-            for(auto cube:cube_list){
-                neighbor_mp[cube] = 1ll;
-            }
-            for(auto cube:cube_list){
-                for(auto next_cube:adjacent_cube_ids_[cube]){
-                    auto tmp_neighbor_bit = neighbor_mp[cube];
-                    tmp_neighbor_bit <<= 1;
-                    if(neighbor_mp[next_cube]){
-                        tmp_neighbor_bit |= 1;
-                    }
-                    neighbor_mp[cube] = tmp_neighbor_bit;
-                }
-            }
+            std::unordered_set<tableint> cube_set(cube_list.begin(), cube_list.end());
             uint32_t cross_size = Meta_dim_ * 2 * Cross_edge_counts_;
 
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
@@ -1062,6 +1134,7 @@ namespace hnswlib {
                 auto ep_id = cube_entry_points_[cube_id];
                 char* ep_data = getDataByInternalId(ep_id);
                 dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
+                if (metrics) metrics->distance_computations++;
                 if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getMetadata(ep_id)))) {
                     top_candidates.emplace(dist, ep_id);
                     lowerBound = std::min(lowerBound, dist);
@@ -1072,6 +1145,8 @@ namespace hnswlib {
                 visited_array[ep_id] = visited_array_tag;
             }
 
+            size_t hops = 0;
+            boost::dynamic_bitset<> visited_cubes(cube_entry_points_.size());
             while (!candidate_set.empty()) {
                 std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
                 dist_t candidate_dist = -current_node_pair.first;
@@ -1080,9 +1155,12 @@ namespace hnswlib {
                     break;
                 }
                 candidate_set.pop();
+                if (metrics) metrics->hops++;
+                hops++;
 
                 tableint current_node_id = current_node_pair.second;
                 tableint cube_id = getCubeId(current_node_id);
+                visited_cubes[cube_id] = true;
                 int *data = (int *) get_linklist0(current_node_id);
                 size_t size = getListCount((linklistsizeint*)data);
                 int *adja = (int *) getCrossEdges(current_node_id);
@@ -1095,24 +1173,29 @@ namespace hnswlib {
 
                 for (size_t j = 1; j <= size + cross_size; j++) {
                     int candidate_id;
+                    bool is_cross_edge = false;
                     if(j <= size)
                         candidate_id = *(data + j);
                     else {
                         auto l = j-size;
-                        if( (1 << l/Cross_edge_counts_) & neighbor_mp[cube_id])
-                            candidate_id = *(adja + l);
-                        else
+                        tableint neighbor_id = *(adja + l);
+                        if(cube_set.find(neighbor_id) == cube_set.end())
                             continue;
+                        candidate_id = neighbor_id;
+                        is_cross_edge = true;
                     }
                     if (candidate_id == 0) continue;
+                    if (is_cross_edge && metrics) metrics->cross_cube_edges++;
 #ifdef USE_SSE
                     _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
 #endif
                     if (!(visited_array[candidate_id] == visited_array_tag)) {
                         visited_array[candidate_id] = visited_array_tag;
+                        if (metrics) metrics->nodes_visited++;
 
                         char *currObj1 = (getDataByInternalId(candidate_id));
                         dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+                        if (metrics) metrics->distance_computations++;
 
                         if (top_candidates.size() < ef_ || lowerBound > dist) {
                             candidate_set.emplace(-dist, candidate_id);
@@ -1137,6 +1220,11 @@ namespace hnswlib {
                 }
             }
 
+            // Count visited cubes from visited_cubes bitset
+            if (metrics) {
+                metrics->cubes_visited = visited_cubes.count();
+            }
+
             visited_list_pool_->releaseVisitedList(vl);
 
             while (top_candidates.size() > k) {
@@ -1154,6 +1242,12 @@ namespace hnswlib {
         // Search with explicit cube ID
         std::priority_queue<std::pair<dist_t, labeltype >>
         searchFlyKnn(const void *query_data, size_t k, tableint entry_cube, BaseFilterFunctor* isIdAllowed = nullptr) {
+            return searchFlyKnn(query_data, k, entry_cube, isIdAllowed, nullptr);
+        }
+
+        // Search with explicit cube ID (with metrics tracking)
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchFlyKnn(const void *query_data, size_t k, tableint entry_cube, BaseFilterFunctor* isIdAllowed, SearchMetrics* metrics) {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
             VisitedList *vl = visited_list_pool_->getFreeVisitedList();
@@ -1171,6 +1265,7 @@ namespace hnswlib {
             cube_mp[entry_cube] = true;
             char* ep_data = getDataByInternalId(ep_id);
             dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
+            if (metrics) metrics->distance_computations++;
             if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getMetadata(ep_id)))) {
                 top_candidates.emplace(dist, ep_id);
                 lowerBound = std::min(lowerBound, dist);
@@ -1189,6 +1284,7 @@ namespace hnswlib {
                     break;
                 }
                 candidate_set.pop();
+                if (metrics) metrics->hops++;
 
                 tableint current_node_id = current_node_pair.second;
                 tableint cube_id = getCubeId(current_node_id);
@@ -1209,14 +1305,18 @@ namespace hnswlib {
                     }
                     if(!cube_mp[getCubeId(candidate_id)]) continue;
                     if (candidate_id == 0) continue;
+                    // Track cross-cube edge traversal when j > size
+                    if (j > size && metrics) metrics->cross_cube_edges++;
 #ifdef USE_SSE
                     _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
 #endif
                     if (!(visited_array[candidate_id] == visited_array_tag)) {
                         visited_array[candidate_id] = visited_array_tag;
+                        if (metrics) metrics->nodes_visited++;
 
                         char *currObj1 = (getDataByInternalId(candidate_id));
                         dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+                        if (metrics) metrics->distance_computations++;
 
                         if (top_candidates.size() < ef_ || lowerBound > dist) {
 
@@ -1241,6 +1341,11 @@ namespace hnswlib {
                         }
                     }
                 }
+            }
+
+            // Count visited cubes from cube_mp bitset
+            if (metrics) {
+                metrics->cubes_visited = cube_mp.count();
             }
 
             visited_list_pool_->releaseVisitedList(vl);

@@ -47,8 +47,9 @@ RadiusFilterParams generate_filter_radius(const BoundingBox &global_bbox, float 
         center[d] = dist(rng);
     }
 
-    // Radius based on filter_ratio (fraction of max range)
-    float radius = max_range * sqrt(filter_ratio) / 2.0f;
+    // Radius based on filter_ratio (fraction of volume in N-dimensional space)
+    // Volume of N-ball scales as r^N, so we need pow(filter_ratio, 1/dim) for correct radius
+    float radius = max_range * pow(filter_ratio, 1.0f / attr_dim) / 2.0f;
 
     return RadiusFilterParams(center, radius, attr_dim);
 }
@@ -75,7 +76,9 @@ static void test_approx_radius(float *massQ, size_t vecsize, size_t qsize, Index
     size_t total = 0;
     long double total_time = 0;
     long double total_ratio = 0;
-    size_t dist_count = 0;
+#ifdef COLLECT_LOG
+    appr_alg.reset_metrics();
+#endif
     for (int i = 0; i < qsize; i++) {
 #ifndef WIN32
         float sys_t, usr_t, usr_t_sum = 0;
@@ -106,6 +109,15 @@ static void test_approx_radius(float *massQ, size_t vecsize, size_t qsize, Index
 
     cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
     cerr << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
+#ifdef COLLECT_LOG
+    const auto& m = appr_alg.get_metrics();
+    cerr << "Metrics: avg_layer=" << m.avg_layer()
+         << " avg_cubes_visited=" << m.avg_cubes_visited()
+         << " avg_selectivity=" << m.avg_selectivity()
+         << " avg_cross_cube_edges=" << m.avg_cross_cube_edges()
+         << " avg_distance_computations=" << m.avg_distance_computations()
+         << " avg_hops=" << m.avg_hops() << endl;
+#endif
     outer_recall = recall * 100;
     return;
 }
@@ -256,7 +268,7 @@ int main(int argc, char *argv[]) {
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
     sprintf(meta_path, "%s%s_metadata_%s.bin", source, dataset, meta);
-    sprintf(index_path, "%s%s.cube", source, dataset);
+    sprintf(index_path, "%s%s_%s.cube", source, meta, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
     hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X.data;

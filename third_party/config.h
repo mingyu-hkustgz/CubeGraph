@@ -21,6 +21,9 @@ template<typename dist_t> char *hnswlib::HierarchicalNSWStatic<dist_t>::static_b
 template<typename dist_t> char *hnswlib::HierarchicalNSWCube<dist_t>::static_base_data_ = NULL;
 #define UNLIKELY(x) __builtin_expect(x, 0)
 
+// Enable detailed benchmark logging: collects per-query metrics and outputs averages
+#define COLLECT_LOG
+
 namespace ANNS {
 
     // type for storing the id of vectors

@@ -66,9 +66,7 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, Hierarchical
         struct rusage run_start, run_end;
         GetCurTime(&run_start);
 #endif
-        ContainLabelFilter contain_filter(500000);
-
-        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchCubeKnn(massQ + vecdim * i, k, cubelist, &contain_filter);
+        std::priority_queue<std::pair<float, labeltype >> result = appr_alg.searchCubeKnn(massQ + vecdim * i, k, cubelist);
 #ifndef WIN32
         GetCurTime(&run_end);
         GetTime(&run_start, &run_end, &usr_t, &sys_t);
@@ -158,7 +156,7 @@ int main(int argc, char *argv[]) {
     }
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
-    sprintf(groundtruth_path, "%s%s_next_groundtruth.ivecs", source, dataset);
+    sprintf(groundtruth_path, "%s%s_groundtruth.ivecs", source, dataset);
     sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-merge%d.log", K, dataset, dataset, CUBE);
     sprintf(index_path, "%s%s.cube", source, dataset);
     Matrix<float> X(data_path);

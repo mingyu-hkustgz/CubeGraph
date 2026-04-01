@@ -76,7 +76,9 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &a
     size_t total = 0;
     long double total_time = 0;
     long double total_ratio = 0;
-    size_t dist_count = 0;
+#ifdef COLLECT_LOG
+    appr_alg.reset_metrics();
+#endif
     for (int i = 0; i < qsize; i++) {
 #ifndef WIN32
         float sys_t, usr_t, usr_t_sum = 0;
@@ -107,6 +109,15 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexCube &a
 
     cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
     cerr << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
+#ifdef COLLECT_LOG
+    const auto& m = appr_alg.get_metrics();
+    cerr << "Metrics: avg_layer=" << m.avg_layer()
+         << " avg_cubes_visited=" << m.avg_cubes_visited()
+         << " avg_selectivity=" << m.avg_selectivity()
+         << " avg_cross_cube_edges=" << m.avg_cross_cube_edges()
+         << " avg_distance_computations=" << m.avg_distance_computations()
+         << " avg_hops=" << m.avg_hops() << endl;
+#endif
     outer_recall = recall * 100;
     return;
 }
@@ -262,7 +273,7 @@ int main(int argc, char *argv[]) {
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
     sprintf(meta_path, "%s%s_metadata_%s.bin", source, dataset, meta);
-    sprintf(index_path, "%s%s.cube", source, dataset);
+    sprintf(index_path, "%s%s_%s.cube", source, meta, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
     hnswlib::HierarchicalNSWCube<float>::static_base_data_ = (char *) X.data;

@@ -46,7 +46,6 @@ struct BoundingBox {
     }
 };
 
-// N-dimensional sphere (for radius filters)
 struct Sphere {
     std::vector<float> center;
     float radius;
@@ -54,6 +53,30 @@ struct Sphere {
     Sphere() : radius(0.0f) {}
     Sphere(size_t dim) : center(dim), radius(0.0f) {}
     Sphere(const std::vector<float>& c, float r) : center(c), radius(r) {}
+
+    // Check if this sphere overlaps with a given BoundingBox
+    bool overlaps(const BoundingBox& box) const {
+        float dist_squared = 0.0f;
+        float radius_squared = radius * radius;
+
+        for (size_t i = 0; i < center.size(); ++i) {
+            // Find the closest point on the bounding box to the sphere center along dimension i
+            float closest_p = std::max(box.min_bounds[i], std::min(center[i], box.max_bounds[i]));
+
+            // Calculate the 1D squared distance and accumulate
+            float diff = closest_p - center[i];
+            dist_squared += diff * diff;
+
+            // Early exit: if the accumulated squared distance already exceeds the squared radius,
+            // the sphere and the box definitely do not overlap.
+            if (dist_squared > radius_squared) {
+                return false;
+            }
+        }
+
+        // If we finish the loop and the distance is within the radius, they overlap
+        return true;
+    }
 };
 
 struct RadiusFilterParams {
@@ -62,6 +85,43 @@ struct RadiusFilterParams {
     RadiusFilterParams() : attr_dim(0) {}
     RadiusFilterParams(const std::vector<float>& center, float radius, size_t attr_dim)
         : sphere(center, radius), attr_dim(attr_dim) {}
+};
+
+struct PolygonFilterParams {
+    std::vector<std::vector<float>> vertices;  // polygon vertices in 2D
+    size_t num_vertices;                        // 3=triangle, 4=quad, 5=pentagon
+    size_t attr_dim;                            // should be 2 for polygon
+
+    PolygonFilterParams() : num_vertices(0), attr_dim(0) {}
+    PolygonFilterParams(const std::vector<std::vector<float>>& verts, size_t attr_dim)
+        : vertices(verts), num_vertices(verts.size()), attr_dim(attr_dim) {}
+
+    // Compute bounding box of the polygon for cube selection
+    BoundingBox get_bbox() const {
+        BoundingBox bbox(2);
+        if (vertices.empty()) return bbox;
+        bbox.min_bounds[0] = bbox.max_bounds[0] = vertices[0][0];
+        bbox.min_bounds[1] = bbox.max_bounds[1] = vertices[0][1];
+        for (const auto& v : vertices) {
+            bbox.min_bounds[0] = std::min(bbox.min_bounds[0], v[0]);
+            bbox.max_bounds[0] = std::max(bbox.max_bounds[0], v[0]);
+            bbox.min_bounds[1] = std::min(bbox.min_bounds[1], v[1]);
+            bbox.max_bounds[1] = std::max(bbox.max_bounds[1], v[1]);
+        }
+        return bbox;
+    }
+
+    // Compute approximate area of polygon using shoelace formula
+    float area() const {
+        if (num_vertices < 3) return 0.0f;
+        float sum = 0.0f;
+        for (size_t i = 0; i < num_vertices; i++) {
+            const auto& v1 = vertices[i];
+            const auto& v2 = vertices[(i + 1) % num_vertices];
+            sum += v1[0] * v2[1] - v2[0] * v1[1];
+        }
+        return std::abs(sum) * 0.5f;
+    }
 };
 
 class IndexCube {
@@ -86,6 +146,10 @@ private:
     bool verbose = false;
     float *data_;
 
+#ifdef COLLECT_LOG
+    hnswlib::SearchMetricsAccumulator metrics_accumulator_;
+#endif
+
     // Compute squared distance from a point to the closest point in a cube's bounding box
     float dist2_point_to_cube_bbox(const std::vector<float>& point, const BoundingBox& cube_bbox) const {
         float d2 = 0.0f;
@@ -109,7 +173,7 @@ public:
               size_t M = 16,
               size_t ef_construction = 200,
               size_t cross_edge_count = 2,
-              size_t min_points_per_cube = 50) :
+              size_t min_points_per_cube = 10) :
             num_layers_(num_layers),
             M_(M),
             ef_construction_(ef_construction),
@@ -129,6 +193,11 @@ public:
     void set_global_ef(size_t ef) {
         for (auto &u: layers_) u.hnsw_index->setEf(ef);
     }
+
+#ifdef COLLECT_LOG
+    const hnswlib::SearchMetricsAccumulator& get_metrics() const { return metrics_accumulator_; }
+    void reset_metrics() { metrics_accumulator_.reset(); }
+#endif
 
 
     // Load metadata from binary file
@@ -278,22 +347,11 @@ public:
         // Create HNSW-CUBE index
         layer.hnsw_index = new hnswlib::HierarchicalNSWCube<float>(space, num_vectors_, attr_dim_, layer.total_cubes,
                                                                    cross_edge_count_, M_, ef_construction_);
-        std::cerr << "layer.hnsw_index->size_links_level0_ = " << layer.hnsw_index->size_links_level0_ << std::endl;
-        std::cerr << "layer.hnsw_index->size_adja_per_element_ = " << layer.hnsw_index->size_adja_per_element_ << std::endl;
-        std::cerr << "layer.hnsw_index->size_meta_per_element_ = " << layer.hnsw_index->size_meta_per_element_ << std::endl;
-        std::cerr << "layer.hnsw_index->offset_cross_level0_ = " << layer.hnsw_index->offset_cross_level0_ << std::endl;
-        std::cerr << "layer.hnsw_index->label_offset_ = " << layer.hnsw_index->label_offset_ << std::endl;
-        std::cerr << "layer.hnsw_index->cube_offset_ = " << layer.hnsw_index->cube_offset_ << std::endl;
-        std::cerr << "layer.hnsw_index->meta_offset_level0_ = " << layer.hnsw_index->meta_offset_level0_ << std::endl;
-        std::cerr << "layer.hnsw_index->offsetLevel0_ = " << layer.hnsw_index->offsetLevel0_ << std::endl;
-        std::cerr << "layer.hnsw_index->Number vectors = " << layer.hnsw_index->cur_element_count << std::endl;
         int check_tag = 0, report = 200000;
 #pragma omp parallel for schedule(dynamic, 144)
         for (size_t i = 0; i < num_vectors_; i++) {
             size_t cube_id = compute_cube_id(metadata_[i], layer);
-            assert(cube_id < layer.total_cubes);
             layer.hnsw_index->addCubePoint(data_ + i * vec_dim_, i, cube_id, metadata_[i].data());
-            assert(layer.hnsw_index->getCubeId(i) < layer.total_cubes);
 #pragma omp critical
             {
                 check_tag++;
@@ -420,6 +478,37 @@ public:
         }
     };
 
+    // Filter functor: admits only points whose metadata lies inside the polygon (ray casting)
+    class PolygonFilter : public hnswlib::BaseFilterFunctor {
+    public:
+        const PolygonFilterParams& polygon_;
+        size_t attr_dim_;
+
+        PolygonFilter(const PolygonFilterParams& polygon, size_t attr_dim)
+            : polygon_(polygon), attr_dim_(attr_dim) {}
+
+        bool operator()(hnswlib::metatype *meta) override {
+            // Ray casting algorithm for point-in-polygon test
+            // Only works for 2D polygons (attr_dim must be 2)
+            // For higher dimensions, only consider first 2 dimensions
+            int crossings = 0;
+            size_t n = polygon_.vertices.size();
+            for (size_t i = 0; i < n; i++) {
+                const auto& v1 = polygon_.vertices[i];
+                const auto& v2 = polygon_.vertices[(i + 1) % n];
+
+                // Check if ray from point crosses this edge
+                // y-range check ensures we only count each edge once
+                if (((v1[1] <= meta[1] && meta[1] < v2[1]) ||
+                     (v2[1] <= meta[1] && meta[1] < v1[1])) &&
+                    (meta[0] < (v2[0] - v1[0]) * (meta[1] - v1[1]) / (v2[1] - v1[1]) + v1[0])) {
+                    crossings++;
+                }
+            }
+            return (crossings % 2) == 1;  // odd crossings = inside
+        }
+    };
+
     size_t select_layer_with_BBox(const BoundingBox *filter_bbox = nullptr) const {
         if(filter_bbox== nullptr) return 0;
         size_t target_layer = 0;
@@ -496,7 +585,7 @@ public:
     // Select layer based on sphere radius vs cube diagonal
     size_t select_layer_with_Radius(const RadiusFilterParams* filter_radius = nullptr) const {
         if (filter_radius == nullptr) return 0;
-        size_t target_layer = 0;
+        int target_layer = 0;
         float radius = filter_radius->sphere.radius;
         while (target_layer < layers_.size()) {
             // Compute diagonal of cube at this layer
@@ -505,14 +594,12 @@ public:
                 diagonal2 += layers_[target_layer].cube_width[d] * layers_[target_layer].cube_width[d];
             }
             float diagonal = std::sqrt(diagonal2);
-            // If sphere fits entirely within cube, we might need finer layer
-            // If sphere is larger than cube, we need coarser layer
-            if (radius > diagonal) {
-                return target_layer;
+            if (2 * radius > diagonal) {
+                return std::max(target_layer, 0);
             }
             target_layer++;
         }
-        target_layer--;
+        if(target_layer == num_layers_) target_layer--;
         return target_layer;
     }
 
@@ -551,12 +638,8 @@ public:
                 cube_bbox.min_bounds[d] = layer.global_bbox.min_bounds[d] + coords[d] * layer.cube_width[d];
                 cube_bbox.max_bounds[d] = cube_bbox.min_bounds[d] + layer.cube_width[d];
             }
-
-            // Check if sphere intersects cube (distance from sphere center to cube <= radius)
-            float d2 = dist2_point_to_cube_bbox(sphere.center, cube_bbox);
-            if (d2 <= radius2) {
+            if (sphere.overlaps(cube_bbox)) {
                 result.push_back(current_cube);
-
                 // Explore adjacent cubes
                 for (int neighbor : layer.adjacent_cubes[current_cube]) {
                     if (!visited[neighbor]) {
@@ -579,7 +662,17 @@ public:
         const auto &layer = layers_[layer_id];
         BBoxFilter bbox_filter(*filter_bbox, attr_dim_);
         auto cube_id = find_cube_with_BBox(layer_id, filter_bbox);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        auto result = layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &bbox_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
         return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &bbox_filter);
+#endif
     }
 
     // Predetermined search method (searches fixed cube list)
@@ -590,7 +683,18 @@ public:
         const auto &layer = layers_[layer_id];
         BBoxFilter bbox_filter(*filter_bbox, attr_dim_);
         std::vector<hnswlib::tableint> cube_list = find_cube_list_with_BBox(layer_id, filter_bbox);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        metrics.cubes_visited = cube_list.size();
+        auto result = layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &bbox_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
         return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &bbox_filter);
+#endif
     }
 
     // Radius-filtered search method
@@ -601,7 +705,17 @@ public:
         const auto &layer = layers_[layer_id];
         RadiusFilter radius_filter(filter_radius->sphere, filter_radius->attr_dim);
         auto cube_id = find_cube_with_Radius(layer_id, filter_radius);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        auto result = layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &radius_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
         return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &radius_filter);
+#endif
     }
 
     // Predetermined radius search method
@@ -612,7 +726,142 @@ public:
         const auto &layer = layers_[layer_id];
         RadiusFilter radius_filter(filter_radius->sphere, filter_radius->attr_dim);
         std::vector<hnswlib::tableint> cube_list = find_cube_list_with_Radius(layer_id, filter_radius);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        metrics.cubes_visited = cube_list.size();
+        auto result = layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &radius_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
         return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &radius_filter);
+#endif
+    }
+
+    // Select layer based on polygon bounding box vs cube diagonal
+    size_t select_layer_with_Polygon(const PolygonFilterParams* filter_polygon = nullptr) const {
+        if (filter_polygon == nullptr) return 0;
+        BoundingBox bbox = filter_polygon->get_bbox();
+        int target_layer = 0;
+        while (target_layer < layers_.size()) {
+            // Compute diagonal of cube at this layer
+            float diagonal2 = 0.0f;
+            for (size_t d = 0; d < attr_dim_; d++) {
+                diagonal2 += layers_[target_layer].cube_width[d] * layers_[target_layer].cube_width[d];
+            }
+            float diagonal = std::sqrt(diagonal2);
+
+            // Check if polygon bbox edge length exceeds diagonal
+            for (size_t d = 0; d < 2 && d < attr_dim_; d++) {
+                float edge_length = bbox.max_bounds[d] - bbox.min_bounds[d];
+                if (2 * edge_length > diagonal) {
+                    return std::max(target_layer, 0);
+                }
+            }
+            target_layer++;
+        }
+        if (target_layer == num_layers_) target_layer--;
+        return target_layer;
+    }
+
+    int find_cube_with_Polygon(size_t layer_id, const PolygonFilterParams* filter_polygon = nullptr) const {
+        if (filter_polygon == nullptr) return 0;
+        const auto& layer = layers_[layer_id];
+        // Use centroid of polygon as the reference point
+        BoundingBox bbox = filter_polygon->get_bbox();
+        std::vector<float> center(2);
+        center[0] = (bbox.min_bounds[0] + bbox.max_bounds[0]) / 2.0f;
+        center[1] = (bbox.min_bounds[1] + bbox.max_bounds[1]) / 2.0f;
+        return static_cast<int>(compute_cube_id(center, layer));
+    }
+
+    std::vector<hnswlib::tableint> find_cube_list_with_Polygon(size_t layer_id, const PolygonFilterParams* filter_polygon = nullptr) const {
+        if (filter_polygon == nullptr) return {};
+
+        const auto& layer = layers_[layer_id];
+        BoundingBox polygon_bbox = filter_polygon->get_bbox();
+
+        std::vector<hnswlib::tableint> result;
+        std::vector<char> visited(layer.total_cubes, 0);
+
+        // Start from cube containing polygon centroid
+        int start_cube = find_cube_with_Polygon(layer_id, filter_polygon);
+        std::queue<int> bfs_queue;
+        bfs_queue.push(start_cube);
+        visited[start_cube] = 1;
+
+        while (!bfs_queue.empty()) {
+            int current_cube = bfs_queue.front();
+            bfs_queue.pop();
+
+            // Get cube bounding box
+            BoundingBox cube_bbox(attr_dim_);
+            size_t coords[MAX_DIM];
+            decode_cube_id(current_cube, layer, coords);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                cube_bbox.min_bounds[d] = layer.global_bbox.min_bounds[d] + coords[d] * layer.cube_width[d];
+                cube_bbox.max_bounds[d] = cube_bbox.min_bounds[d] + layer.cube_width[d];
+            }
+
+            // Check overlap with polygon bounding box (use bbox for quick rejection)
+            if (cube_bbox.overlaps(polygon_bbox)) {
+                result.push_back(current_cube);
+
+                // Explore adjacent cubes
+                for (int neighbor : layer.adjacent_cubes[current_cube]) {
+                    if (!visited[neighbor]) {
+                        visited[neighbor] = 1;
+                        bfs_queue.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // Polygon-filtered search method (fly search)
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    fly_search(const float *query_vector, size_t k,
+           const PolygonFilterParams* filter_polygon = nullptr) {
+        auto layer_id = select_layer_with_Polygon(filter_polygon);
+        const auto &layer = layers_[layer_id];
+        PolygonFilter polygon_filter(*filter_polygon, filter_polygon->attr_dim);
+        auto cube_id = find_cube_with_Polygon(layer_id, filter_polygon);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        auto result = layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &polygon_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
+        return layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, &polygon_filter);
+#endif
+    }
+
+    // Polygon-filtered search method (predetermined)
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    predetermined_search(const float *query_vector, size_t k,
+           const PolygonFilterParams* filter_polygon = nullptr) {
+        auto layer_id = select_layer_with_Polygon(filter_polygon);
+        const auto &layer = layers_[layer_id];
+        PolygonFilter polygon_filter(*filter_polygon, filter_polygon->attr_dim);
+        std::vector<hnswlib::tableint> cube_list = find_cube_list_with_Polygon(layer_id, filter_polygon);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        metrics.cubes_visited = cube_list.size();
+        auto result = layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &polygon_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
+        return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &polygon_filter);
+#endif
     }
 
     // Get global bounding box
@@ -734,6 +983,11 @@ public:
         size_t meta_n, meta_d;
         hnswlib::readBinaryPOD(input, meta_n);
         hnswlib::readBinaryPOD(input, meta_d);
+        if (meta_d != attr_dim_) {
+            std::cerr << "ERROR: metadata dimension mismatch - loaded " << meta_d
+                      << " but expected " << attr_dim_ << std::endl;
+            return false;
+        }
         metadata_.resize(meta_n, std::vector<float>(meta_d));
         for (size_t i = 0; i < meta_n; i++) {
             input.read(reinterpret_cast<char*>(metadata_[i].data()), meta_d * sizeof(float));

@@ -109,53 +109,59 @@ def generate_4d_hollow(n):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate metadata files')
-    parser.add_argument('--output-dir', '-o', default='./DATA/sift',
-                        help='Output directory')
+    parser.add_argument('--dataset', '-d', default='sift',
+                        help='Dataset name (used in output directory and filenames)')
+    parser.add_argument('--output-dir', '-o', default=None,
+                        help='Output directory (default: ./DATA/<dataset>)')
     parser.add_argument('--n', type=int, default=1000000,
                         help='Number of vectors')
     args = parser.parse_args()
 
+    if args.output_dir is None:
+        args.output_dir = f'./DATA/{args.dataset}'
+
     os.makedirs(args.output_dir, exist_ok=True)
 
     n = args.n
+    prefix = f'{args.dataset}_metadata_'
 
     # Generate 2D metadata (existing distributions for reference)
     print("\n=== Generating 2D metadata ===")
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_uniform_2d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}uniform_2d.bin'),
                   generate_uniform(n, 2))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_normal_2d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}normal_2d.bin'),
                   generate_normal(n, 2))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_clustered_2d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}clustered_2d.bin'),
                   generate_clustered(n, 2))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_skewed_2d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}skewed_2d.bin'),
                   generate_skewed(n, 2))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_hollow_2d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}hollow_2d.bin'),
                   generate_hollow(n, 2))
 
     # Generate 3D metadata
     print("\n=== Generating 3D metadata ===")
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_uniform_3d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}uniform_3d.bin'),
                   generate_3d_uniform(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_normal_3d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}normal_3d.bin'),
                   generate_3d_normal(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_clustered_3d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}clustered_3d.bin'),
                   generate_3d_clustered(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_skewed_3d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}skewed_3d.bin'),
                   generate_3d_skewed(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_hollow_3d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}hollow_3d.bin'),
                   generate_3d_hollow(n))
 
     # Generate 4D metadata
     print("\n=== Generating 4D metadata ===")
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_uniform_4d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}uniform_4d.bin'),
                   generate_4d_uniform(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_normal_4d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}normal_4d.bin'),
                   generate_4d_normal(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_clustered_4d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}clustered_4d.bin'),
                   generate_4d_clustered(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_skewed_4d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}skewed_4d.bin'),
                   generate_4d_skewed(n))
-    save_metadata(os.path.join(args.output_dir, 'sift_metadata_hollow_4d.bin'),
+    save_metadata(os.path.join(args.output_dir, f'{prefix}hollow_4d.bin'),
                   generate_4d_hollow(n))
 
     print("\nDone!")
