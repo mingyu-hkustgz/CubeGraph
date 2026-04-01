@@ -29,7 +29,7 @@ Makefile
 *.log
 *.out
 *.png
-
+*.bin
 # DATA
 /DATA
 
