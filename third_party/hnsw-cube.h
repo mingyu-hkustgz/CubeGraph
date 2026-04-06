@@ -1132,6 +1132,7 @@ namespace hnswlib {
             // Get entry point for the specified cube
             for(auto cube_id:cube_list){
                 auto ep_id = cube_entry_points_[cube_id];
+                if (ep_id == -1) continue;  // Skip empty cubes
                 char* ep_data = getDataByInternalId(ep_id);
                 dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
                 if (metrics) metrics->distance_computations++;
@@ -1179,7 +1180,7 @@ namespace hnswlib {
                     else {
                         auto l = j-size;
                         tableint neighbor_id = *(adja + l);
-                        if(cube_set.find(neighbor_id) == cube_set.end())
+                        if(cube_set.find(getCubeId(neighbor_id)) == cube_set.end())
                             continue;
                         candidate_id = neighbor_id;
                         is_cross_edge = true;
@@ -1262,6 +1263,10 @@ namespace hnswlib {
             dist_t lowerBound = std::numeric_limits<dist_t>::max();;
             // Get entry point for the specified cube
             auto ep_id = cube_entry_points_[entry_cube];
+            if (ep_id == -1) {
+                visited_list_pool_->releaseVisitedList(vl);
+                return result;  // Empty cube, return empty result
+            }
             cube_mp[entry_cube] = true;
             char* ep_data = getDataByInternalId(ep_id);
             dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);

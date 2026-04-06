@@ -124,6 +124,66 @@ struct PolygonFilterParams {
     }
 };
 
+// ============================================================================
+// Composite Filter Framework: Combine multiple filters with AND/OR/NOT
+// ============================================================================
+
+// AND composition: accepts if BOTH filters accept
+class AndFilter : public hnswlib::BaseFilterFunctor {
+private:
+    hnswlib::BaseFilterFunctor* a_;
+    hnswlib::BaseFilterFunctor* b_;
+public:
+    AndFilter(hnswlib::BaseFilterFunctor* a, hnswlib::BaseFilterFunctor* b) : a_(a), b_(b) {}
+    bool operator()(hnswlib::metatype *meta) override {
+        return (*a_)(meta) && (*b_)(meta);
+    }
+};
+
+// OR composition: accepts if EITHER filter accepts
+class OrFilter : public hnswlib::BaseFilterFunctor {
+private:
+    hnswlib::BaseFilterFunctor* a_;
+    hnswlib::BaseFilterFunctor* b_;
+public:
+    OrFilter(hnswlib::BaseFilterFunctor* a, hnswlib::BaseFilterFunctor* b) : a_(a), b_(b) {}
+    bool operator()(hnswlib::metatype *meta) override {
+        return (*a_)(meta) || (*b_)(meta);
+    }
+};
+
+// NOT composition: accepts if filter REJECTS
+class NotFilter : public hnswlib::BaseFilterFunctor {
+private:
+    hnswlib::BaseFilterFunctor* f_;
+public:
+    NotFilter(hnswlib::BaseFilterFunctor* f) : f_(f) {}
+    bool operator()(hnswlib::metatype *meta) override {
+        return !(*f_)(meta);
+    }
+};
+
+// Composite filter specification for complex filter compositions
+enum class CompositeFilterType { BBOX, RADIUS, POLYGON };
+
+struct CompositeFilterSpec {
+    bool use_bbox = false;          // use BBox as part of filter
+    bool use_radius = false;         // use Radius as part of filter
+    bool use_polygon = false;        // use Polygon as part of filter
+    bool bbox_negate = false;        // apply NOT to bbox
+    bool radius_negate = false;      // apply NOT to radius
+    bool polygon_negate = false;     // apply NOT to polygon
+    CompositeFilterType primary_op = CompositeFilterType::BBOX;  // primary filter type for cube selection
+};
+
+struct CompositeFilterParams {
+    BoundingBox bbox;
+    RadiusFilterParams radius;
+    PolygonFilterParams polygon;
+    CompositeFilterSpec spec;
+    size_t attr_dim;
+};
+
 class IndexCube {
 private:
     // Configuration for a single layer
@@ -150,22 +210,6 @@ private:
     hnswlib::SearchMetricsAccumulator metrics_accumulator_;
 #endif
 
-    // Compute squared distance from a point to the closest point in a cube's bounding box
-    float dist2_point_to_cube_bbox(const std::vector<float>& point, const BoundingBox& cube_bbox) const {
-        float d2 = 0.0f;
-        for (size_t d = 0; d < attr_dim_; d++) {
-            float coord = point[d];
-            float closest = coord;
-            if (coord < cube_bbox.min_bounds[d]) {
-                closest = cube_bbox.min_bounds[d];
-            } else if (coord > cube_bbox.max_bounds[d]) {
-                closest = cube_bbox.max_bounds[d];
-            }
-            float diff = coord - closest;
-            d2 += diff * diff;
-        }
-        return d2;
-    }
 
 public:
     // Constructor
@@ -173,7 +217,7 @@ public:
               size_t M = 16,
               size_t ef_construction = 200,
               size_t cross_edge_count = 2,
-              size_t min_points_per_cube = 10) :
+              size_t min_points_per_cube = 50) :
             num_layers_(num_layers),
             M_(M),
             ef_construction_(ef_construction),
@@ -525,6 +569,12 @@ public:
         return target_layer;
     }
 
+    // Get the HNSW index for a specific layer (for custom filter searches)
+    hnswlib::HierarchicalNSWCube<float>* get_hnsw_index(size_t layer_id) {
+        if (layer_id >= layers_.size()) return nullptr;
+        return layers_[layer_id].hnsw_index;
+    }
+
     int find_cube_with_BBox(size_t layer_id, const BoundingBox *filter_bbox = nullptr) const {
         if (filter_bbox == nullptr) return 0;
         const auto &layer = layers_[layer_id];
@@ -695,6 +745,91 @@ public:
 #else
         return layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, &bbox_filter);
 #endif
+    }
+
+    // Build composite filter from CompositeFilterParams
+    // Returns ownership of the filter - caller must manage memory
+    static hnswlib::BaseFilterFunctor* build_composite_filter(const CompositeFilterParams& params) {
+        hnswlib::BaseFilterFunctor* result = nullptr;
+
+        // Create individual filters
+        BBoxFilter* bbox_filter = nullptr;
+        RadiusFilter* radius_filter = nullptr;
+
+        if (params.spec.use_bbox) {
+            bbox_filter = new BBoxFilter(params.bbox, params.attr_dim);
+            if (params.spec.bbox_negate) {
+                result = new NotFilter(bbox_filter);
+            } else {
+                result = bbox_filter;
+            }
+        }
+
+        if (params.spec.use_radius) {
+            radius_filter = new RadiusFilter(params.radius.sphere, params.attr_dim);
+            hnswlib::BaseFilterFunctor* radius_to_use = radius_filter;
+            if (params.spec.radius_negate) {
+                radius_to_use = new NotFilter(radius_filter);
+            }
+
+            if (result == nullptr) {
+                result = radius_to_use;
+            } else {
+                // Combine: result AND radius_to_use
+                result = new AndFilter(result, radius_to_use);
+            }
+        }
+
+        return result;
+    }
+
+    // Composite filter search method (fly search - traverses adjacent cubes)
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    fly_search(const float *query_vector, size_t k,
+           const CompositeFilterParams* filter_params = nullptr) {
+        auto layer_id = select_layer_with_BBox(&filter_params->bbox);
+        const auto &layer = layers_[layer_id];
+        hnswlib::BaseFilterFunctor* composite_filter = build_composite_filter(*filter_params);
+        auto cube_id = find_cube_with_BBox(layer_id, &filter_params->bbox);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        auto result = layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, composite_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
+        auto result = layer.hnsw_index->searchFlyKnn(query_vector, k, cube_id, composite_filter);
+#endif
+        // Clean up dynamically allocated filters
+        delete composite_filter;
+        return result;
+    }
+
+    // Composite filter search method (predetermined - searches fixed cube list)
+    std::priority_queue<std::pair<float, hnswlib::labeltype>>
+    predetermined_search(const float *query_vector, size_t k,
+           const CompositeFilterParams* filter_params = nullptr) {
+        auto layer_id = select_layer_with_BBox(&filter_params->bbox);
+        const auto &layer = layers_[layer_id];
+        hnswlib::BaseFilterFunctor* composite_filter = build_composite_filter(*filter_params);
+        std::vector<hnswlib::tableint> cube_list = find_cube_list_with_BBox(layer_id, &filter_params->bbox);
+#ifdef COLLECT_LOG
+        hnswlib::SearchMetrics metrics;
+        metrics.layer_id = layer_id;
+        metrics.total_cubes_in_layer = layer.total_cubes;
+        metrics.total_nodes_in_layer = layer.hnsw_index->getCurrentElementCount();
+        metrics.cubes_visited = cube_list.size();
+        auto result = layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, composite_filter, &metrics);
+        metrics_accumulator_.add(metrics);
+        return result;
+#else
+        auto result = layer.hnsw_index->searchCubeKnn(query_vector, k, cube_list, composite_filter);
+#endif
+        // Clean up dynamically allocated filters
+        delete composite_filter;
+        return result;
     }
 
     // Radius-filtered search method

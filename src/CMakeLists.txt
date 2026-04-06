@@ -14,4 +14,6 @@ add_executable(bench_polygon bench_hierarchical_polygon.cpp)
 
 add_executable(bench_post_filtering bench_post_filtering.cpp)
 
+add_executable(bench_complex_filter bench_complex_filter.cpp)
+
 add_executable(test_predetermined_search test_predetermined_search.cpp)

@@ -72,6 +72,9 @@ namespace hnswlib {
         std::mutex deleted_elements_lock;  // lock for deleted_elements
         std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
+        // Metadata storage for filtering
+        std::vector<std::vector<metatype>> metadata_;  // stored metadata
+        size_t meta_dim_;                              // metadata dimension
 
         HierarchicalNSWStatic(SpaceInterface<dist_t> *s) {
         }
@@ -175,6 +178,13 @@ namespace hnswlib {
             ef_ = ef;
         }
 
+        void set_meta_dim(size_t dim) { meta_dim_ = dim; }
+
+        size_t get_meta_dim() const { return meta_dim_; }
+
+        const std::vector<std::vector<metatype>>& get_metadata() const { return metadata_; }
+
+        std::vector<std::vector<metatype>>& get_metadata() { return metadata_; }
 
         inline std::mutex& getLabelOpMutex(labeltype label) const {
             // calculate hash
@@ -1284,6 +1294,307 @@ namespace hnswlib {
                 top_candidates = searchBaseLayerST<false>(
                         currObj, query_data, std::max(ef_, k), isIdAllowed);
             }
+
+            while (top_candidates.size() > k) {
+                top_candidates.pop();
+            }
+            while (top_candidates.size() > 0) {
+                std::pair<dist_t, tableint> rez = top_candidates.top();
+                result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+                top_candidates.pop();
+            }
+            return result;
+        }
+
+        // searchKnn overload with MetaFilterFunctor for metadata-based filtering
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchKnn(const void *query_data, size_t k, MetaFilterFunctor* metaFilter) const {
+            std::priority_queue<std::pair<dist_t, labeltype >> result;
+            if (cur_element_count == 0) return result;
+
+            tableint currObj = enterpoint_node_;
+            dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+
+            for (int level = maxlevel_; level > 0; level--) {
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+                    unsigned int *data;
+
+                    data = (unsigned int *) get_linklist(currObj, level);
+                    int size = getListCount(data);
+                    metric_hops++;
+                    metric_distance_computations+=size;
+
+                    tableint *datal = (tableint *) (data + 1);
+                    for (int i = 0; i < size; i++) {
+                        tableint cand = datal[i];
+                        if (cand < 0 || cand > max_elements_)
+                            throw std::runtime_error("cand error");
+                        dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+
+                        if (d < curdist) {
+                            curdist = d;
+                            currObj = cand;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+            dist_t lowerBound = std::numeric_limits<dist_t>::max();;
+
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+
+            visited_array[currObj] = visited_array_tag;
+            candidate_set.emplace(-curdist, currObj);
+
+            while (!candidate_set.empty()) {
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                dist_t candidate_dist = -current_node_pair.first;
+
+                if (candidate_dist > lowerBound && top_candidates.size() == ef_) {
+                    break;
+                }
+                candidate_set.pop();
+
+                tableint current_node_id = current_node_pair.second;
+                int *data = (int *) get_linklist0(current_node_id);
+                size_t size = getListCount((linklistsizeint*)data);
+
+                for (size_t j = 1; j <= size; j++) {
+                    int candidate_id = *(data + j);
+                    if (!(visited_array[candidate_id] == visited_array_tag)) {
+                        visited_array[candidate_id] = visited_array_tag;
+
+                        char *currObj1 = getDataByInternalId(candidate_id);
+                        dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                        if (top_candidates.size() < ef_ || lowerBound > dist) {
+                            candidate_set.emplace(-dist, candidate_id);
+
+                            if (!isMarkedDeleted(candidate_id)) {
+                                // Apply metadata filter if provided
+                                // Use external label to index into metadata_
+                                bool allowed = true;
+                                if (metaFilter && meta_dim_ > 0) {
+                                    labeltype external_label = getExternalLabel(candidate_id);
+                                    if (external_label < metadata_.size()) {
+                                        allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                                    }
+                                }
+                                if (allowed) {
+                                    top_candidates.emplace(dist, candidate_id);
+                                }
+                            }
+
+                            if (top_candidates.size() > ef_) {
+                                top_candidates.pop();
+                            }
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            visited_list_pool_->releaseVisitedList(vl);
+
+            while (top_candidates.size() > k) {
+                top_candidates.pop();
+            }
+            while (top_candidates.size() > 0) {
+                std::pair<dist_t, tableint> rez = top_candidates.top();
+                result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+                top_candidates.pop();
+            }
+            return result;
+        }
+
+        // Search with multiple entry points (predetermined cube filtering without cross edges)
+        // Takes a vector of entry point IDs instead of starting from single enterpoint_node_
+        // This allows searching specific subsets (cubes) without cross-cube edge traversal
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchCubeKnn(const void *query_data, size_t k, std::vector<tableint> &entry_points,
+                      BaseFilterFunctor* isIdAllowed = nullptr) const {
+            std::priority_queue<std::pair<dist_t, labeltype >> result;
+            if (cur_element_count == 0) return result;
+
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+            dist_t lowerBound = std::numeric_limits<dist_t>::max();;
+
+            // Initialize from all entry points
+            for (tableint ep_id : entry_points) {
+                if (ep_id < 0 || ep_id > max_elements_) continue;
+                visited_array[ep_id] = visited_array_tag;
+                char* ep_data = getDataByInternalId(ep_id);
+                dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
+                if (!isMarkedDeleted(ep_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(ep_id)))) {
+                    top_candidates.emplace(dist, ep_id);
+                    lowerBound = std::min(lowerBound, dist);
+                }
+                candidate_set.emplace(-dist, ep_id);
+            }
+
+            // Standard HNSW traversal (same as searchBaseLayerST)
+            while (!candidate_set.empty()) {
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                dist_t candidate_dist = -current_node_pair.first;
+
+                if (candidate_dist > lowerBound && top_candidates.size() == ef_) {
+                    break;
+                }
+                candidate_set.pop();
+
+                tableint current_node_id = current_node_pair.second;
+                int *data = (int *) get_linklist0(current_node_id);
+                size_t size = getListCount((linklistsizeint*)data);
+
+                for (size_t j = 1; j <= size; j++) {
+                    int candidate_id = *(data + j);
+                    if (!(visited_array[candidate_id] == visited_array_tag)) {
+                        visited_array[candidate_id] = visited_array_tag;
+
+                        char *currObj1 = getDataByInternalId(candidate_id);
+                        dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                        if (top_candidates.size() < ef_ || lowerBound > dist) {
+                            candidate_set.emplace(-dist, candidate_id);
+
+                            if (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getExternalLabel(candidate_id)))) {
+                                top_candidates.emplace(dist, candidate_id);
+                            }
+
+                            if (top_candidates.size() > ef_) {
+                                top_candidates.pop();
+                            }
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            visited_list_pool_->releaseVisitedList(vl);
+
+            while (top_candidates.size() > k) {
+                top_candidates.pop();
+            }
+            while (top_candidates.size() > 0) {
+                std::pair<dist_t, tableint> rez = top_candidates.top();
+                result.push(std::pair<dist_t, labeltype>(rez.first, getExternalLabel(rez.second)));
+                top_candidates.pop();
+            }
+            return result;
+        }
+
+        // Search with multiple entry points using MetaFilterFunctor for metadata-based filtering
+        // Takes a vector of entry point IDs instead of starting from single enterpoint_node_
+        // Uses MetaFilterFunctor which receives metadata pointer instead of label
+        std::priority_queue<std::pair<dist_t, labeltype >>
+        searchCubeKnn(const void *query_data, size_t k, std::vector<tableint> &entry_points,
+                      MetaFilterFunctor* metaFilter) const {
+            std::priority_queue<std::pair<dist_t, labeltype >> result;
+            if (cur_element_count == 0) return result;
+
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+            dist_t lowerBound = std::numeric_limits<dist_t>::max();;
+
+            // Initialize from all entry points
+            for (tableint ep_id : entry_points) {
+                if (ep_id < 0 || ep_id > max_elements_) continue;
+                visited_array[ep_id] = visited_array_tag;
+                char* ep_data = getDataByInternalId(ep_id);
+                dist_t dist = fstdistfunc_(query_data, ep_data, dist_func_param_);
+                if (!isMarkedDeleted(ep_id)) {
+                    // Apply metadata filter if provided
+                    // Use external label to index into metadata_
+                    bool allowed = true;
+                    if (metaFilter && meta_dim_ > 0) {
+                        labeltype external_label = getExternalLabel(ep_id);
+                        if (external_label < metadata_.size()) {
+                            allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                        }
+                    }
+                    if (allowed) {
+                        top_candidates.emplace(dist, ep_id);
+                        lowerBound = std::min(lowerBound, dist);
+                    }
+                }
+                candidate_set.emplace(-dist, ep_id);
+            }
+
+            // Standard HNSW traversal (same as searchBaseLayerST)
+            while (!candidate_set.empty()) {
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                dist_t candidate_dist = -current_node_pair.first;
+
+                if (candidate_dist > lowerBound && top_candidates.size() == ef_) {
+                    break;
+                }
+                candidate_set.pop();
+
+                tableint current_node_id = current_node_pair.second;
+                int *data = (int *) get_linklist0(current_node_id);
+                size_t size = getListCount((linklistsizeint*)data);
+
+                for (size_t j = 1; j <= size; j++) {
+                    int candidate_id = *(data + j);
+                    if (!(visited_array[candidate_id] == visited_array_tag)) {
+                        visited_array[candidate_id] = visited_array_tag;
+
+                        char *currObj1 = getDataByInternalId(candidate_id);
+                        dist_t dist = fstdistfunc_(query_data, currObj1, dist_func_param_);
+
+                        if (top_candidates.size() < ef_ || lowerBound > dist) {
+                            candidate_set.emplace(-dist, candidate_id);
+
+                            if (!isMarkedDeleted(candidate_id)) {
+                                // Apply metadata filter if provided
+                                // Use external label to index into metadata_
+                                bool allowed = true;
+                                if (metaFilter && meta_dim_ > 0) {
+                                    labeltype external_label = getExternalLabel(candidate_id);
+                                    if (external_label < metadata_.size()) {
+                                        allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                                    }
+                                }
+                                if (allowed) {
+                                    top_candidates.emplace(dist, candidate_id);
+                                }
+                            }
+
+                            if (top_candidates.size() > ef_) {
+                                top_candidates.pop();
+                            }
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            visited_list_pool_->releaseVisitedList(vl);
 
             while (top_candidates.size() > k) {
                 top_candidates.pop();

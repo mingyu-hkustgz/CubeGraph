@@ -4,13 +4,15 @@
 
 #include <iostream>
 #include <fstream>
+
 #include <ctime>
 #include <cmath>
-#include "hnswlib/hnswlib.h"
+#include "hnsw-static.h"
 #include "matrix.h"
 #include "utils.h"
 #include <getopt.h>
-#include "../third_party/config.h"
+#include "config.h"
+#include "IndexCube.h"
 
 using namespace std;
 using namespace hnswlib;
@@ -24,250 +26,389 @@ static void log_index_time(const char* dataset, const char* program, long long b
 }
 
 const int MAXK = 100;
+
 int efSearch = 20;
 double outer_recall = 0;
 
-struct BoundingBox {
-    std::vector<float> min_bounds;
-    std::vector<float> max_bounds;
-    BoundingBox() {}
-    BoundingBox(size_t dim) : min_bounds(dim), max_bounds(dim) {}
-    bool contains(const std::vector<float> &point) const {
-        for (size_t i = 0; i < min_bounds.size(); i++) {
-            if (point[i] < min_bounds[i] || point[i] > max_bounds[i])
+// BBoxFilterHNSW: metadata-based bounding box filter for use with HierarchicalNSWStatic
+class BBoxFilterHNSW : public MetaFilterFunctor {
+public:
+    BBoxFilterHNSW(const BoundingBox& bbox) : bbox_(bbox) {}
+
+    bool operator()(hnswlib::metatype *meta) override {
+        for (size_t d = 0; d < bbox_.min_bounds.size(); d++) {
+            float v = meta[d];
+            if (v < bbox_.min_bounds[d] || v > bbox_.max_bounds[d]) {
                 return false;
+            }
         }
         return true;
     }
+
+private:
+    const BoundingBox& bbox_;
 };
 
-BoundingBox generate_filter_bbox(const BoundingBox &global_bbox, float filter_ratio, size_t attr_dim, mt19937 &rng) {
-    BoundingBox filter_bbox(attr_dim);
-    for (size_t d = 0; d < attr_dim; d++) {
+// Generate filter bounding box centered at a random point
+BoundingBox generate_filter_bbox(const BoundingBox &global_bbox, float filter_ratio, size_t meta_dim, mt19937 &rng) {
+    BoundingBox filter_bbox(meta_dim);
+
+    for (size_t d = 0; d < meta_dim; d++) {
         float range = global_bbox.max_bounds[d] - global_bbox.min_bounds[d];
-        float filter_size = range * sqrt(filter_ratio);
+        float filter_size = range * sqrt(filter_ratio);  // sqrt for 2D to get linear dimension
+
+        // Random center within valid range
         uniform_real_distribution<float> dist(
                 global_bbox.min_bounds[d] + filter_size / 2,
-                global_bbox.max_bounds[d] - filter_size / 2);
+                global_bbox.max_bounds[d] - filter_size / 2
+        );
         float center = dist(rng);
+
         filter_bbox.min_bounds[d] = center - filter_size / 2;
         filter_bbox.max_bounds[d] = center + filter_size / 2;
     }
+
     return filter_bbox;
 }
 
-vector<vector<float>> load_metadata(const char *metadata_file, size_t &n, size_t &d) {
-    ifstream in(metadata_file, ios::binary);
-    if (!in.is_open()) throw runtime_error("Cannot open metadata file");
-    in.read(reinterpret_cast<char *>(&n), sizeof(size_t));
-    in.read(reinterpret_cast<char *>(&d), sizeof(size_t));
-    vector<vector<float>> metadata(n, vector<float>(d));
-    for (size_t i = 0; i < n; i++)
-        in.read(reinterpret_cast<char *>(metadata[i].data()), d * sizeof(float));
-    in.close();
-    return metadata;
-}
 
-// POST filtering: search full HNSW with oversample, then filter results
-static void test_approx_post(float *massQ, size_t vecsize, size_t qsize,
-                              HierarchicalNSW<float> &appr_alg, size_t vecdim,
-                              vector<priority_queue<pair<float, labeltype>>> &answers, size_t k,
-                              vector<BoundingBox> &filters,
-                              const vector<vector<float>> &metadata, size_t attr_dim) {
-    size_t correct = 0;
-    size_t total = 0;
-    long double total_time = 0;
-    long double total_ratio = 0;
-
-    for (int i = 0; i < (int)qsize; i++) {
-        float sys_t, usr_t;
-        struct rusage run_start, run_end;
-        GetCurTime(&run_start);
-
-        // Oversample: retrieve k * oversample_factor candidates
-        size_t oversample = max((size_t)k * 10, (size_t)1000);
-        auto raw_result = appr_alg.searchKnn(massQ + vecdim * i, oversample);
-
-        // Post-filter: keep only those passing the bounding box filter
-        priority_queue<pair<float, labeltype>> result;
-        while (!raw_result.empty() && result.size() < k) {
-            auto [dist, label] = raw_result.top();
-            raw_result.pop();
-            const auto &meta = metadata[label];
-            bool pass = true;
-            for (size_t d = 0; d < attr_dim; d++) {
-                if (meta[d] < filters[i].min_bounds[d] || meta[d] > filters[i].max_bounds[d]) {
-                    pass = false;
-                    break;
-                }
-            }
-            if (pass) result.emplace(dist, label);
-        }
-
-        GetCurTime(&run_end);
-        GetTime(&run_start, &run_end, &usr_t, &sys_t);
-        total_time += usr_t * 1e6;
-
-        priority_queue<pair<float, labeltype>> gt(answers[i]);
-        total += gt.size();
-        correct += recall(result, gt);
-        total_ratio += Ratio(result, gt);
-    }
-
-    long double time_us_per_query = total_time / qsize;
-    long double rec = 1.0f * correct / total;
-    long double dist_ratio = total_ratio / qsize;
-
-    cout << rec * 100.0 << " " << 1e6 / time_us_per_query << " " << dist_ratio << endl;
-    cerr << rec * 100.0 << " " << 1e6 / time_us_per_query << " " << dist_ratio << endl;
-    outer_recall = rec * 100;
-}
-
-static void test_vs_recall_post(float *massQ, size_t vecsize, size_t qsize,
-                                 HierarchicalNSW<float> &appr_alg, size_t vecdim,
-                                 vector<priority_queue<pair<float, labeltype>>> &answers, size_t k,
-                                 vector<BoundingBox> &filters,
-                                 const vector<vector<float>> &metadata, size_t attr_dim) {
-    vector<size_t> efs;
-    unsigned efBase = efSearch;
-    for (int i = 0; i < 15; i++) {
-        if (efBase >= k) efs.push_back(efBase);
-        efBase += efSearch;
-    }
-    for (size_t ef : efs) {
-        appr_alg.setEf(ef);
-        test_approx_post(massQ, vecsize, qsize, appr_alg, vecdim, answers, k, filters, metadata, attr_dim);
-        if (outer_recall > 99.5) break;
-    }
-}
 
 template<typename GT>
-static void get_gt(Matrix<float> &Q, Matrix<float> &X, GT G,
-                   vector<priority_queue<pair<float, labeltype>>> &answers, size_t subk) {
-    (vector<priority_queue<pair<float, labeltype>>>(Q.n)).swap(answers);
-    for (int i = 0; i < (int)Q.n; i++) {
-        for (int j = 0; j < (int)subk; j++) {
+static void
+get_gt(Matrix<float> &Q, Matrix<float> &X, GT G, vector<std::priority_queue<std::pair<float, labeltype >>> &answers,
+       size_t subk) {
+    (vector<std::priority_queue<std::pair<float, labeltype >>>(Q.n)).swap(answers);
+    for (int i = 0; i < Q.n; i++) {
+        for (int j = 0; j < subk; j++) {
             auto gt = G.data[G.d * i + j];
-            if (gt < 0) break;
+            if (gt < 0) break;  // no more valid ground-truth entries
             answers[i].emplace(sqr_dist(Q.data + i * Q.d, X.data + gt * X.d, X.d), gt);
         }
     }
 }
 
+static void test_approx(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWStatic<float> &appr_alg,
+                        size_t vecdim, size_t meta_dim,
+                        vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
+                        vector<BoundingBox> &filters) {
+    size_t correct = 0;
+    size_t total = 0;
+    long double total_time = 0;
+    long double total_ratio = 0;
+    for (int i = 0; i < qsize; i++) {
+#ifndef WIN32
+        float sys_t, usr_t, usr_t_sum = 0;
+        struct rusage run_start, run_end;
+        GetCurTime(&run_start);
+#endif
+
+        BBoxFilterHNSW bboxFilter(filters[i]);
+        std::priority_queue<std::pair<float, labeltype >> result =
+                appr_alg.searchKnn(massQ + vecdim * i, k, &bboxFilter);
+#ifndef WIN32
+        GetCurTime(&run_end);
+        GetTime(&run_start, &run_end, &usr_t, &sys_t);
+        total_time += usr_t * 1e6;
+#endif
+        std::priority_queue<std::pair<float, labeltype >> gt(answers[i]);
+        total += gt.size();
+        int tmp = recall(result, gt);
+        total_ratio += Ratio(result, gt);
+        correct += tmp;
+    }
+    long double time_us_per_query = total_time / qsize;
+    long double recall = 1.0f * correct / total;
+    long double dist_ratio = total_ratio / qsize;
+    cout << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
+    cerr << recall * 100.0 << " " << 1e6 / (time_us_per_query) << " " << dist_ratio << endl;
+    outer_recall = recall * 100;
+    return;
+}
+
+static void test_vs_recall(float *massQ, size_t vecsize, size_t qsize, HierarchicalNSWStatic<float> &appr_alg,
+                           size_t vecdim, size_t meta_dim,
+                           vector<std::priority_queue<std::pair<float, labeltype >>> &answers, size_t k,
+                           vector<BoundingBox> &filters) {
+    vector<size_t> efs;
+    unsigned efBase = efSearch;
+    for (int i = 0; i < 15; i++) {
+        if(efBase >= k) efs.push_back(efBase);
+        efBase += efSearch;
+    }
+    for (size_t ef: efs) {
+        appr_alg.setEf(ef);
+        test_approx(massQ, vecsize, qsize, appr_alg, vecdim, meta_dim, answers, k, filters);
+        if (outer_recall > 99.5) break;
+    }
+}
+
+
+// Compute filtered groundtruth: for each query, find top-k L2 nearest base vectors
+// among those whose metadata lies within the query's random bounding-box filter.
+// Returns Matrix<int> G where G.data[G.d * q + r] = ID of r-th nearest neighbor
+// for query q (same layout as ivecs-loaded Matrix<unsigned>).
 static Matrix<int> compute_filtered_gt(
-        Matrix<float> &Q, Matrix<float> &X_base,
-        const vector<BoundingBox> &filters,
-        const vector<vector<float>> &metadata,
-        size_t attr_dim, size_t k) {
+        Matrix<float> &Q,
+        Matrix<float> &X_base,
+        const std::vector<BoundingBox> &filters,
+        const std::vector<std::vector<float>> &metadata,
+        size_t meta_dim,
+        size_t k) {
     Matrix<int> G(Q.n, k);
-#pragma omp parallel for schedule(dynamic, 144)
+    double total_selectivity = 0.0;
+
+#pragma omp parallel for schedule(dynamic, 144) reduction(+:total_selectivity)
     for (size_t i = 0; i < Q.n; i++) {
         const float *query = Q.data + i * Q.d;
         const BoundingBox &fb = filters[i];
-        vector<size_t> passed;
+
+        // Pass 1: collect indices of base vectors passing the filter
+        std::vector<size_t> passed;
+        passed.reserve(X_base.n);
         for (size_t j = 0; j < X_base.n; j++) {
             const float *meta = metadata[j].data();
             bool ok = true;
-            for (size_t d = 0; d < attr_dim; d++) {
-                if (meta[d] < fb.min_bounds[d] || meta[d] > fb.max_bounds[d]) { ok = false; break; }
+            for (size_t d = 0; d < meta_dim; d++) {
+                float v = meta[d];
+                if (v < fb.min_bounds[d] || v > fb.max_bounds[d]) {
+                    ok = false;
+                    break;
+                }
             }
             if (ok) passed.push_back(j);
         }
-        vector<pair<float, size_t>> dists;
-        dists.reserve(passed.size());
-        for (size_t idx : passed)
-            dists.emplace_back(sqr_dist(query, X_base.data + idx * X_base.d, Q.d), idx);
-        if (dists.size() > k)
-            nth_element(dists.begin(), dists.begin() + k, dists.end(),
-                        [](const auto &a, const auto &b) { return a.first < b.first; });
-        sort(dists.begin(), dists.begin() + min(k, dists.size()),
-             [](const auto &a, const auto &b) { return a.first < b.first; });
-        for (size_t r = 0; r < k; r++)
-            G.data[G.d * i + r] = (r < dists.size()) ? (int)dists[r].second : -1;
+
+        // Compute selectivity for this query
+        double selectivity = (double)passed.size() / X_base.n;
+        total_selectivity += selectivity;
+
+        // Pass 2: compute L2 distances and find top-k
+        if (passed.size() <= k) {
+            std::vector<std::pair<float, size_t>> dists;
+            dists.reserve(passed.size());
+            for (size_t idx: passed) {
+                float d = sqr_dist(query, X_base.data + idx * X_base.d, Q.d);
+                dists.emplace_back(d, idx);
+            }
+            std::sort(dists.begin(), dists.end(),
+                      [](const auto &a, const auto &b) { return a.first < b.first; });
+            size_t r = 0;
+            for (auto &p: dists) G.data[G.d * i + r++] = (int) p.second;
+            for (; r < k; r++) G.data[G.d * i + r] = -1;
+        } else {
+            std::vector<std::pair<float, size_t>> dists;
+            dists.reserve(passed.size());
+            for (size_t idx: passed) {
+                float d = sqr_dist(query, X_base.data + idx * X_base.d, Q.d);
+                dists.emplace_back(d, idx);
+            }
+            // O(n) partial sort: nth_element to find top-k, then sort top-k
+            std::nth_element(dists.begin(), dists.begin() + k, dists.end(),
+                             [](const auto &a, const auto &b) { return a.first < b.first; });
+            std::sort(dists.begin(), dists.begin() + k,
+                      [](const auto &a, const auto &b) { return a.first < b.first; });
+            for (size_t r = 0; r < k; r++)
+                G.data[G.d * i + r] = (int) dists[r].second;
+        }
     }
+    double avg_selectivity = total_selectivity / Q.n;
+    cout << "Average filter selectivity: " << avg_selectivity << endl;
+    cerr << "Average filter selectivity: " << avg_selectivity << endl;
     return G;
 }
 
+// Load metadata from binary file
+// Format: [n: size_t][d: size_t][vector_0: float[d]][vector_1: float[d]]...
+static std::vector<std::vector<float>> load_metadata(const char *path, size_t &n, size_t &dim) {
+    std::vector<std::vector<float>> metadata;
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        cerr << "Cannot open metadata file: " << path << endl;
+        return metadata;
+    }
+    // Read header: n and d
+    in.read(reinterpret_cast<char*>(&n), sizeof(size_t));
+    in.read(reinterpret_cast<char*>(&dim), sizeof(size_t));
+    cerr << "  Metadata file header: n=" << n << ", d=" << dim << endl;
+
+    metadata.resize(n, std::vector<float>(dim));
+    for (size_t i = 0; i < n; i++) {
+        in.read(reinterpret_cast<char*>(metadata[i].data()), dim * sizeof(float));
+    }
+    in.close();
+    return metadata;
+}
+
+// Compute global bounding box from metadata
+static BoundingBox compute_global_bbox(const std::vector<std::vector<float>> &metadata, size_t meta_dim) {
+    BoundingBox bbox(meta_dim);
+    for (size_t d = 0; d < meta_dim; d++) {
+        bbox.min_bounds[d] = std::numeric_limits<float>::max();
+        bbox.max_bounds[d] = std::numeric_limits<float>::lowest();
+    }
+    for (size_t i = 0; i < metadata.size(); i++) {
+        for (size_t d = 0; d < meta_dim; d++) {
+            float v = metadata[i][d];
+            bbox.min_bounds[d] = std::min(bbox.min_bounds[d], v);
+            bbox.max_bounds[d] = std::max(bbox.max_bounds[d], v);
+        }
+    }
+    return bbox;
+}
+
+
 int main(int argc, char *argv[]) {
-    int iarg = 0;
-    char source[256] = "";
-    char dataset[256] = "";
-    char file_type[256] = "fvecs";
 
     const struct option longopts[] = {
-        {"dataset", required_argument, 0, 'd'},
-        {"source",  required_argument, 0, 's'},
-        {0, 0, 0, 0}
+            // General Parameter
+            {"help",                no_argument,       0, 'h'},
+
+            // Query Parameter
+            {"randomized",          required_argument, 0, 'd'},
+            {"k",                   required_argument, 0, 'k'},
+            {"epsilon0",            required_argument, 0, 'e'},
+            {"gap",                 required_argument, 0, 'p'},
+
+            // Indexing Path
+            {"dataset",             required_argument, 0, 'n'},
+            {"index_path",          required_argument, 0, 'i'},
+            {"query_path",          required_argument, 0, 'q'},
+            {"groundtruth_path",    required_argument, 0, 'g'},
+            {"result_path",         required_argument, 0, 'r'},
+            {"transformation_path", required_argument, 0, 't'},
+            {"meta",                required_argument, 0, 'm'},
+
+            // Filter Parameter
+            {"filter-ratio",        required_argument, 0, 'f'},
     };
+
     int ind;
+    int iarg = 0, K = 10, num_thread = 1;
+   opterr = 1; //getopt error message (off: 0)
+    char source[256] = "";
+    char dataset[256] = "";
+    char index_path[256] = "";
+    char query_path[256] = "";
+    char data_path[256] = "";
+    char meta_path[256] = "";
+    char groundtruth_path[256] = "";
+    char result_path[256] = "";
+    char file_type[256] = "fvecs";
+    char meta[256] = "uniform_2d";  // default metadata type
+    float filter_ratio = FILTER_RATIO;
+
     while (iarg != -1) {
-        iarg = getopt_long(argc, argv, "d:s:", longopts, &ind);
+        iarg = getopt_long(argc, argv, "d:s:r:f:m:", longopts, &ind);
         switch (iarg) {
-            case 'd': if (optarg) strcpy(dataset, optarg); break;
-            case 's': if (optarg) strcpy(source, optarg); break;
+            case 'd':
+                if (optarg) {
+                    strcpy(dataset, optarg);
+                }
+                break;
+            case 's':
+                if (optarg) {
+                    strcpy(source, optarg);
+                }
+                break;
+            case 'f':
+                if (optarg) {
+                    filter_ratio = atof(optarg);
+                }
+                break;
+            case 'm':
+                if (optarg) {
+                    strcpy(meta, optarg);
+                }
+                break;
         }
     }
-
-    char data_path[256], query_path[256], meta_path[256], result_path[256];
-    sprintf(data_path,  "%s%s_base.%s",                source, dataset, file_type);
-    sprintf(query_path, "%s%s_query.%s",               source, dataset, file_type);
-    sprintf(meta_path,  "%s%s_metadata_uniform_2d.bin", source, dataset);
-
+    sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
+    sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
+    sprintf(meta_path, "%s%s_metadata_%s.bin", source, dataset, meta);
+    sprintf(index_path, "%s%s_%s.post", source, meta, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
+    hnswlib::HierarchicalNSWStatic<float>::static_base_data_ = (char *) X.data;
 
-    size_t meta_n, attr_dim;
-    auto metadata = load_metadata(meta_path, meta_n, attr_dim);
+    size_t num_layers = 6;
+    size_t M = 16;
+    size_t ef_construction = 200;
+
+    // Load metadata
+    cout << "Loading metadata from " << meta_path << "..." << endl;
+    size_t n_vectors, meta_dim;
+    std::vector<std::vector<float>> metadata = load_metadata(meta_path, n_vectors, meta_dim);
+    cout << "  Loaded metadata for " << metadata.size() << " vectors, dim=" << meta_dim << endl;
 
     // Compute global bounding box
-    BoundingBox global_bbox(attr_dim);
-    for (size_t d = 0; d < attr_dim; d++) {
-        global_bbox.min_bounds[d] = numeric_limits<float>::max();
-        global_bbox.max_bounds[d] = numeric_limits<float>::lowest();
+    BoundingBox global_bbox = compute_global_bbox(metadata, meta_dim);
+    cout << "  Global bbox: ";
+    for (size_t d = 0; d < meta_dim; d++) {
+        cout << "[" << global_bbox.min_bounds[d] << ", " << global_bbox.max_bounds[d] << "] ";
     }
-    for (const auto &m : metadata) {
-        for (size_t d = 0; d < attr_dim; d++) {
-            global_bbox.min_bounds[d] = min(global_bbox.min_bounds[d], m[d]);
-            global_bbox.max_bounds[d] = max(global_bbox.max_bounds[d], m[d]);
-        }
-    }
+    cout << endl;
 
-    // Build standard HNSW index
-    cout << "Building HNSW index (M=" << HNSW_M << ", ef=" << HNSW_efConstruction << ")..." << endl;
-    auto start = chrono::high_resolution_clock::now();
-    L2Space space(X.d);
-    HierarchicalNSW<float> hnsw(&space, X.n, HNSW_M, HNSW_efConstruction);
+    auto l2space = new hnswlib::L2Space(X.d);
+    hnswlib::HierarchicalNSWStatic<float> *appr_alg;
+
+    if (isFileExists_ifstream(index_path)) {
+        cout << "Loading existing index from " << index_path << "..." << endl;
+        appr_alg = new hnswlib::HierarchicalNSWStatic<float>(l2space, index_path);
+    } else {
+        cout << "Building new index..." << endl;
+        appr_alg = new hnswlib::HierarchicalNSWStatic<float>(l2space, X.n, M, ef_construction);
+        appr_alg->set_meta_dim(meta_dim);
+        appr_alg->get_metadata() = metadata;
+
+        auto start = chrono::high_resolution_clock::now();
 #pragma omp parallel for schedule(dynamic, 144)
-    for (size_t i = 0; i < X.n; i++)
-        hnsw.addPoint(X.data + i * X.d, i);
-    auto end = chrono::high_resolution_clock::now();
-    auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    cout << "Index built in " << build_time << " ms" << endl;
-    log_index_time(dataset, "bench_post_filtering", build_time);
+        for (int i = 0; i < X.n; i++) {
+            appr_alg->addPoint(X.data + (size_t) i * (size_t) X.d, i);
+        }
+        auto end = chrono::high_resolution_clock::now();
+        auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Index built in " << build_time << " ms" << endl;
+        log_index_time(dataset, "bench_hnsw_post", build_time);
+        cout << "Saving index to " << index_path << "..." << endl;
+        appr_alg->saveIndex(index_path);
+    }
 
-    // Generate random filters
-    mt19937 rng(42);
+    // Verify metadata was loaded/stored
+    if (appr_alg->get_metadata().empty() && !metadata.empty()) {
+        cout << "Warning: index metadata is empty, setting now..." << endl;
+        appr_alg->set_meta_dim(meta_dim);
+        appr_alg->get_metadata() = metadata;
+    }
+
     vector<BoundingBox> filters;
-    for (size_t i = 0; i < Q.n; i++)
-        filters.push_back(generate_filter_bbox(global_bbox, FILTER_RATIO, attr_dim, rng));
+    cout << "Generating random filters (ratio=" << filter_ratio << ", seed=42)..." << endl;
+    mt19937 rng(42);
+    for (size_t i = 0; i < Q.n; i++) {
+        filters.push_back(generate_filter_bbox(global_bbox, filter_ratio, meta_dim, rng));
+    }
+    cout << "  Generated " << filters.size() << " filters" << endl;
 
-    // Compute filtered groundtruth
-    cout << "Computing filtered groundtruth..." << endl;
-    Matrix<int> G = compute_filtered_gt(Q, X, filters, metadata, attr_dim, 100);
 
-    vector<priority_queue<pair<float, labeltype>>> answers;
-    int K = 20;
-    sprintf(result_path, "./results/recall@%d/%s/%s-post-bbox-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    cout << "Computing filtered groundtruth (k=" << 100 << ")..." << endl;
+    Matrix<int> G = compute_filtered_gt(Q, X, filters,
+                                        metadata,
+                                        meta_dim, 100);
+    cout << "  Done." << endl;
+
+    vector<std::priority_queue<std::pair<float, labeltype >>> answers;
+    K = 20;
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-post-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
     freopen(result_path, "a", stdout);
     get_gt(Q, X, G, answers, K);
-    test_vs_recall_post(Q.data, X.n, Q.n, hnsw, Q.d, answers, K, filters, metadata, attr_dim);
-
+    test_vs_recall(Q.data, X.n, Q.n, *appr_alg, Q.d, meta_dim, answers, K, filters);
     answers.clear();
     K = 100;
-    sprintf(result_path, "./results/recall@%d/%s/%s-post-bbox-%.2f.log", K, dataset, dataset, FILTER_RATIO);
+    sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-post-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
     freopen(result_path, "a", stdout);
     get_gt(Q, X, G, answers, K);
-    test_vs_recall_post(Q.data, X.n, Q.n, hnsw, Q.d, answers, K, filters, metadata, attr_dim);
+    test_vs_recall(Q.data, X.n, Q.n, *appr_alg, Q.d, meta_dim, answers, K, filters);
 
+    delete appr_alg;
+    delete l2space;
     return 0;
 }

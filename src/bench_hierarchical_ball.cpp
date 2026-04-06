@@ -28,7 +28,7 @@ static void log_index_time(const char* dataset, const char* program, long long b
 const int MAXK = 100;
 
 
-int efSearch = 100;
+int efSearch = 20;
 double outer_recall = 0;
 
 // Generate filter radius (sphere) centered at a random point
@@ -147,7 +147,9 @@ static Matrix<int> compute_filtered_gt_radius(
         size_t attr_dim,
         size_t k) {
     Matrix<int> G(Q.n, k);
-#pragma omp parallel for schedule(dynamic, 144)
+    double total_selectivity = 0.0;
+
+#pragma omp parallel for schedule(dynamic, 144) reduction(+:total_selectivity)
     for (size_t i = 0; i < Q.n; i++) {
         const float *query = Q.data + i * Q.d;
         const RadiusFilterParams &fr = filters[i];
@@ -168,6 +170,10 @@ static Matrix<int> compute_filtered_gt_radius(
                 passed.push_back(j);
             }
         }
+
+        // Compute selectivity for this query
+        double selectivity = (double)passed.size() / X_base.n;
+        total_selectivity += selectivity;
 
         // Pass 2: compute L2 distances and find top-k
         if (passed.size() <= k) {
@@ -197,6 +203,9 @@ static Matrix<int> compute_filtered_gt_radius(
                 G.data[G.d * i + r] = (int) dists[r].second;
         }
     }
+    double avg_selectivity = total_selectivity / Q.n;
+    cout << "Average filter selectivity: " << avg_selectivity << endl;
+    cerr << "Average filter selectivity: " << avg_selectivity << endl;
     return G;
 }
 
