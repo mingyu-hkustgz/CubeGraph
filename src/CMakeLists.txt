@@ -10,7 +10,7 @@ add_executable(bench_hierarchical_cube bench_hierarchical_cube.cpp)
 
 add_executable(bench_hierarchical_ball bench_hierarchical_ball.cpp)
 
-add_executable(bench_polygon bench_hierarchical_polygon.cpp)
+add_executable(bench_hierarchical_polygon bench_hierarchical_polygon.cpp)
 
 add_executable(bench_post_filtering bench_post_filtering.cpp)
 

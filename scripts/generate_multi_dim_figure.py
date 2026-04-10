@@ -9,7 +9,7 @@ from pathlib import Path
 OUTPUT_FILE = Path("figure/Exp-2-Multi-Dim.tex")
 DATASETS = ["sift", "msmarc10m", "yfcc"]
 DIMENSIONS = ["3d", "4d"]
-RATIOS = [0.02, 0.05]
+RATIOS = [0.02, 0.05, 0.01, 0.1]
 METHODS = ["CG", "POST"]
 
 # Dataset display names
@@ -76,7 +76,6 @@ def generate_tikz():
     lines.append(r"    \end{customlegend}")
     lines.append(r"\end{tikzpicture}")
     lines.append("")
-    lines.append(r"\vspace{0.2cm}")
 
     num_rows = len(SUBPLOT_LAYOUT)
     num_cols = len(SUBPLOT_LAYOUT[0]) if SUBPLOT_LAYOUT else 0

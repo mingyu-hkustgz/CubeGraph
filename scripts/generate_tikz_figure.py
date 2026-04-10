@@ -1,42 +1,42 @@
 #!/usr/bin/env python3
 """
 Generate TikZ figure from extracted data files.
+Exp-1: 2D experiments only
 """
 
 from pathlib import Path
 
 # Configuration
 OUTPUT_FILE = Path("figure/Exp-1-Recall-Qps.tex")
-DATASETS = ["sift", "msmarc10m", "deep100m", "yfcc"]
-RATIOS = [0.01, 0.05, 0.10, 0.20]
+DATASETS = ["sift", "msmarc10m", "yfcc"]
+DIMENSIONS = ["2d"]
+RATIOS = [0.01, 0.02, 0.05, 0.10]
 METHODS = ["CG", "ACORN", "POST"]
 
 # Dataset display names
 DATASET_NAMES = {
     "sift": "SIFT",
     "msmarc10m": "MSMARC10M",
-    "deep100m": "Deep100M",
     "yfcc": "YFCC"
 }
 
-# # Subplot positions: (row, col) in 4x4 grid
-SUBPLOT_LAYOUT = [
-    [("sift", 0.01), ("sift", 0.02), ("sift", 0.05), ("sift", 0.10)],
-    [("msmarc10m", 0.01), ("msmarc10m", 0.02), ("msmarc10m", 0.05), ("msmarc10m", 0.10)],
-    [("yfcc", 0.01), ("yfcc", 0.02), ("yfcc", 0.05), ("yfcc", 0.10)],
-]
+# Subplot positions: (row, col) in grid
+# Layout: datasets as rows (SIFT, MSMARC10M, YFCC), ratios as columns
+# Row 0: SIFT-2D-0.01, SIFT-2D-0.02, SIFT-2D-0.05, SIFT-2D-0.10
+# Row 1: MSMARC10M-2D-0.01, MSMARC10M-2D-0.02, MSMARC10M-2D-0.05, MSMARC10M-2D-0.10
+# Row 2: YFCC-2D-0.01, YFCC-2D-0.02, YFCC-2D-0.05, YFCC-2D-0.10
 
-# Subplot positions: (row, col) in 4x4 grid
-# SUBPLOT_LAYOUT = [
-#     [("sift", 0.01), ("sift", 0.05), ("sift", 0.10)],
-#     [("msmarc10m", 0.01), ("msmarc10m", 0.05), ("msmarc10m", 0.10)],
-#     [("deep100m", 0.01), ("deep100m", 0.05), ("deep100m", 0.10)],
-#     [("yfcc", 0.01), ("yfcc", 0.05), ("yfcc", 0.10)],
-# ]
-def load_data(dataset, ratio, method):
+SUBPLOT_LAYOUT = []
+for dataset in DATASETS:
+    row = []
+    for ratio in RATIOS:
+        row.append((dataset, "2d", ratio))
+    SUBPLOT_LAYOUT.append(row)
+
+def load_data(dataset, dim, ratio, method):
     """Load (recall, qps) data from .dat file."""
     ratio_str = f"{ratio:.2f}".replace('.', '_')
-    filepath = Path("figure") / dataset / f"data_{method}_{ratio_str}.dat"
+    filepath = Path("figure") / dataset / f"data_{method}_{dim}_{ratio_str}.dat"
     if not filepath.exists():
         return []
 
@@ -75,32 +75,41 @@ def generate_tikz():
     lines.append(r"\begin{tikzpicture}")
     lines.append(r"    \begin{customlegend}[legend columns=3,")
     lines.append(r"        legend entries={$\CG$-Cube,$\ACORN$-$\gamma$,$\POST$},")
-    lines.append(r"        legend style={at={(0.5,1.15)},anchor=north,draw=none,font=\scriptsize,column sep=0.4cm}]")
+    lines.append(r"        legend style={at={(0.5,1.15)},anchor=north,draw=none,font=\scriptsizesize,column sep=0.4cm}]")
     lines.append(r"    \addlegendimage{line width=0.15mm,color=navy,mark=triangle,mark size=0.5mm}")
     lines.append(r"    \addlegendimage{line width=0.15mm,color=forestgreen,mark=diamond,mark size=0.5mm}")
-    lines.append(r"    \addlegendimage{line width=0.15mm,color=amaranth,mark=*,mark size=0.5mm}")
+    lines.append(r"    \addlegendimage{line width=0.15mm,color=amaranth,mark=o,mark size=0.5mm}")
     lines.append(r"    \end{customlegend}")
     lines.append(r"\end{tikzpicture}")
     lines.append("")
     lines.append(r"\vspace{0.2cm}")
 
-    # Generate 16 subplots in 4 rows
+    num_rows = len(SUBPLOT_LAYOUT)
+    num_cols = len(SUBPLOT_LAYOUT[0]) if SUBPLOT_LAYOUT else 0
+
+    # Generate subplots
     for row_idx, row in enumerate(SUBPLOT_LAYOUT):
-        for col_idx, (dataset, ratio) in enumerate(row):
-            subfig_idx = row_idx * 4 + col_idx + 1
-            lines.append(f"% Subplot {subfig_idx}: {dataset} ratio {ratio}")
-            lines.append(f"\\subfloat[{DATASET_NAMES[dataset]} 2D ratio {ratio:.2f}]{{\\vgap")
+        for col_idx, (dataset, dim, ratio) in enumerate(row):
+            subfig_idx = row_idx * num_cols + col_idx + 1
+
+            # Check if data exists
+            has_data = any(load_data(dataset, dim, ratio, m) for m in METHODS)
+            if not has_data:
+                continue
+
+            lines.append(f"% Subplot {subfig_idx}: {dataset} {dim} ratio {ratio}")
+            lines.append(f"\\subfloat[{DATASET_NAMES[dataset]} {dim.upper()} ratio {ratio:.2f}]{{\\vgap")
             lines.append(r"\begin{tikzpicture}[scale=0.85]")
             lines.append(r"\begin{axis}[")
-            lines.append(r"    height=\columnwidth/2.60,")
-            lines.append(r"    width=\columnwidth/1.80,")
+            lines.append(r"    height=\colspan/2.60,")
+            lines.append(r"    width=\colspan/1.80,")
             lines.append(r"    xlabel=recall@20(\%),")
             lines.append(r"    ylabel=Qps,")
             lines.append(r"    ymode=log,")
             lines.append(r"    xmin=85,")
             lines.append(r"    xmax=100.2,")
-            lines.append(r"    label style={font=\scriptsize},")
-            lines.append(r"    tick label style={font=\scriptsize},")
+            lines.append(r"    label style={font=\scriptsizesize},")
+            lines.append(r"    tick label style={font=\scriptsizesize},")
             lines.append(r"    title style={font=\scriptsizesize},")
             lines.append(r"    ymajorgrids=true,")
             lines.append(r"    xmajorgrids=true,")
@@ -108,7 +117,7 @@ def generate_tikz():
             lines.append(r"]")
 
             # Add CG data
-            cg_data = load_data(dataset, ratio, "CG")
+            cg_data = load_data(dataset, dim, ratio, "CG")
             if cg_data:
                 coords = generate_coords(cg_data)
                 lines.append(r"% CG (CubeGraph)")
@@ -117,19 +126,18 @@ def generate_tikz():
                 lines.append(f"    {coords}")
                 lines.append(r"};")
 
-            # Add ACORN data (skip for deep100m)
-            if dataset != "deep100m":
-                acorn_data = load_data(dataset, ratio, "ACORN")
-                if acorn_data:
-                    coords = generate_coords(acorn_data)
-                    lines.append(r"% ACORN")
-                    lines.append(r"\addplot[line width=0.15mm,color=forestgreen,mark=diamond,mark size=0.5mm]")
-                    lines.append(r"plot coordinates {")
-                    lines.append(f"    {coords}")
-                    lines.append(r"};")
+            # Add ACORN data
+            acorn_data = load_data(dataset, dim, ratio, "ACORN")
+            if acorn_data:
+                coords = generate_coords(acorn_data)
+                lines.append(r"% ACORN")
+                lines.append(r"\addplot[line width=0.15mm,color=forestgreen,mark=diamond,mark size=0.5mm]")
+                lines.append(r"plot coordinates {")
+                lines.append(f"    {coords}")
+                lines.append(r"};")
 
             # Add POST data
-            post_data = load_data(dataset, ratio, "POST")
+            post_data = load_data(dataset, dim, ratio, "POST")
             if post_data:
                 coords = generate_coords(post_data)
                 lines.append(r"% POST")
@@ -141,27 +149,27 @@ def generate_tikz():
             lines.append(r"\end{axis}")
             lines.append(r"\end{tikzpicture}")
 
-            if col_idx < 3:
+            if col_idx < num_cols - 1:
                 lines.append(r"}\hspace{2mm}")
             else:
                 lines.append(r"}")
 
         # Add vertical spacing between rows
-        if row_idx < 3:
+        if row_idx < num_rows - 1:
             lines.append("")
             lines.append(r"\vspace{0.3cm}")
             lines.append("")
 
     lines.append("")
-    lines.append(r"\caption{Search efficiency comparison across different datasets and filter ratios (recall@20 vs.\ Qps).}")
-    lines.append(r"\label{fig:exp1-all-datasets}\vspace{-3ex}")
+    lines.append(r"\caption{Search efficiency comparison across different datasets with 2D attributes (recall@20 vs.\ Qps).}")
+    lines.append(r"\label{fig:exp1-2d}\vspace{-3ex}")
     lines.append(r"\end{footnotesize}")
     lines.append(r"\end{figure*}")
 
     return "\n".join(lines)
 
 if __name__ == "__main__":
-    print("Generating TikZ figure...")
+    print("Generating Exp-1-Recall-Qps.tex (2D only)...")
     content = generate_tikz()
     with open(OUTPUT_FILE, 'w') as f:
         f.write(content)
