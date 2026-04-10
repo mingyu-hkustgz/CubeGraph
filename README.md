@@ -202,5 +202,20 @@ These require a CPU with AVX2 support.
 
 ## References
 
-- [HNSWlib](https://github.com/nmslib/hnswlib) - Fast approximate nearest neighbor search
-- [HNSW Paper](https://arxiv.org/abs/1603.09320) - Hierarchical Navigable Small World graphs
+**CubeGraph: Efficient Retrieval-Augmented Generation for Spatial and Temporal Data** [[paper](https://arxiv.org/abs/2604.06616)] [[bibtex](#bibtex-cite)] - Yang et al., 2026
+
+If you use **CubeGraph** in a research paper, please cite:
+
+```
+@article{yang2026cubegraph,
+  title={CubeGraph: Efficient Retrieval-Augmented Generation for Spatial and Temporal Data},
+  author={Mingyu Yang and Wentao Li and Wei Wang},
+  year={2026},
+  eprint={2604.06616},
+  archivePrefix={arXiv},
+  primaryClass={cs.DB},
+  url={https://arxiv.org/abs/2604.06616}
+}
+```
+
+<span id="bibtex-cite"></span>
