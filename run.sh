@@ -234,16 +234,16 @@ bash mkdir.sh
 #done
 
 
-for data in "${datasets[@]}"; do
-  echo "Searching - ${data} (Cube)"
+# for data in "${datasets[@]}"; do
+#   echo "Searching - ${data} (Cube)"
 
-  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.01 -m "uniform_2d"
+#   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.01 -m "uniform_2d"
 
-  ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
+#   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
 
-  ./build/src/bench_post_filtering -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
+#   ./build/src/bench_post_filtering -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
 
-done
+# done
 
 #for data in "${datasets[@]}"; do
 #  echo "Searching - ${data} (Cube)"
@@ -254,6 +254,31 @@ done
 #
 #
 #done
+
+# KD-Tree partitioned HNSW benchmarks
+
+for data in yfcc msmarc10m sift; do
+  case $data in
+    sift)
+      ratios=(0.01 0.02 0.05 0.10)
+      metas=(uniform_2d )
+      ;;
+    yfcc)
+      ratios=(0.01 0.02 0.05 0.10)
+      metas=(real_2d real_3d)
+      ;;
+    msmarc10m)
+      ratios=(0.01 0.02 0.05 0.10)
+      metas=(uniform_2d )
+      ;;
+  esac
+  for meta in "${metas[@]}"; do
+    for ratio in "${ratios[@]}"; do
+      echo "[KDTree] $data $meta ratio=$ratio"
+      ./build/src/bench_kdtree_partition -d $data -s ./DATA/$data/ -f $ratio -m $meta
+    done
+  done
+done
 
 # ============================================================================
 # Various Distributions Benchmark (SIFT 2D only)

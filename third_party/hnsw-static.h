@@ -73,7 +73,8 @@ namespace hnswlib {
         std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
 
         // Metadata storage for filtering
-        std::vector<std::vector<metatype>> metadata_;  // stored metadata
+        std::vector<std::vector<metatype>> metadata_;  // stored metadata (owned)
+        const std::vector<std::vector<metatype>> *shared_metadata_{nullptr};  // shared metadata pointer (not owned)
         size_t meta_dim_;                              // metadata dimension
 
         HierarchicalNSWStatic(SpaceInterface<dist_t> *s) {
@@ -182,9 +183,16 @@ namespace hnswlib {
 
         size_t get_meta_dim() const { return meta_dim_; }
 
-        const std::vector<std::vector<metatype>>& get_metadata() const { return metadata_; }
+        const std::vector<std::vector<metatype>>& get_metadata() const {
+            if (shared_metadata_) return *shared_metadata_;
+            return metadata_;
+        }
 
         std::vector<std::vector<metatype>>& get_metadata() { return metadata_; }
+
+        void set_shared_metadata(const std::vector<std::vector<metatype>> *ptr) {
+            shared_metadata_ = ptr;
+        }
 
         inline std::mutex& getLabelOpMutex(labeltype label) const {
             // calculate hash
@@ -1383,9 +1391,10 @@ namespace hnswlib {
                                 // Use external label to index into metadata_
                                 bool allowed = true;
                                 if (metaFilter && meta_dim_ > 0) {
+                                    const auto& meta_ref1 = get_metadata();
                                     labeltype external_label = getExternalLabel(candidate_id);
-                                    if (external_label < metadata_.size()) {
-                                        allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                                    if (external_label < meta_ref1.size()) {
+                                        allowed = (*metaFilter)(const_cast<metatype*>(meta_ref1[external_label].data()));
                                     }
                                 }
                                 if (allowed) {
@@ -1530,9 +1539,10 @@ namespace hnswlib {
                     // Use external label to index into metadata_
                     bool allowed = true;
                     if (metaFilter && meta_dim_ > 0) {
+                        const auto& meta_ref = get_metadata();
                         labeltype external_label = getExternalLabel(ep_id);
-                        if (external_label < metadata_.size()) {
-                            allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                        if (external_label < meta_ref.size()) {
+                            allowed = (*metaFilter)(const_cast<metatype*>(meta_ref[external_label].data()));
                         }
                     }
                     if (allowed) {
@@ -1573,9 +1583,10 @@ namespace hnswlib {
                                 // Use external label to index into metadata_
                                 bool allowed = true;
                                 if (metaFilter && meta_dim_ > 0) {
+                                    const auto& meta_ref2 = get_metadata();
                                     labeltype external_label = getExternalLabel(candidate_id);
-                                    if (external_label < metadata_.size()) {
-                                        allowed = (*metaFilter)(const_cast<metatype*>(metadata_[external_label].data()));
+                                    if (external_label < meta_ref2.size()) {
+                                        allowed = (*metaFilter)(const_cast<metatype*>(meta_ref2[external_label].data()));
                                     }
                                 }
                                 if (allowed) {
