@@ -83,7 +83,7 @@ static void test_approx(float *massQ, size_t vecsize, size_t qsize, IndexKDTreeP
 #endif
 
         std::priority_queue<std::pair<float, labeltype >> result =
-            appr_alg.search(massQ + vecdim * i, k, filters[i]);
+                appr_alg.search(massQ + vecdim * i, k, filters[i]);
 
 #ifndef WIN32
         GetCurTime(&run_end);
@@ -231,14 +231,14 @@ static BoundingBox compute_global_bbox(const std::vector<std::vector<float>> &me
 
 int main(int argc, char *argv[]) {
 
-        const struct option longopts[] = {
+    const struct option longopts[] = {
             {"help",                no_argument,       0, 'h'},
             {"dataset",             required_argument, 0, 'd'},
             {"source",              required_argument, 0, 's'},
             {"filter-ratio",        required_argument, 0, 'f'},
             {"meta",                required_argument, 0, 'm'},
             {"leaf-meta-filter",    no_argument,       0, 'P'},
-        };
+    };
 
     int ind;
     int iarg = 0;
@@ -248,6 +248,7 @@ int main(int argc, char *argv[]) {
     char data_path[256] = "";
     char query_path[256] = "";
     char meta_path[256] = "";
+    char index_path[256] = "";
     char result_path[256] = "";
     char file_type[256] = "fvecs";
     char meta[256] = "uniform_2d";
@@ -275,6 +276,7 @@ int main(int argc, char *argv[]) {
     sprintf(data_path, "%s%s_base.%s", source, dataset, file_type);
     sprintf(query_path, "%s%s_query.%s", source, dataset, file_type);
     sprintf(meta_path, "%s%s_metadata_%s.bin", source, dataset, meta);
+    sprintf(index_path, "%s%s_%s.kdtree", source, meta, dataset);
     Matrix<float> X(data_path);
     Matrix<float> Q(query_path);
     size_t query_count = Q.n;
@@ -297,16 +299,29 @@ int main(int argc, char *argv[]) {
     }
     cout << endl;
 
-    // Build KD-Tree partitioned index
+    // Build or load KD-Tree partitioned index
     IndexKDTreePartition index(scan_threshold, M, ef_construction);
 
-    cout << "Building KD-Tree partitioned index (scan_threshold=" << scan_threshold << ")..." << endl;
-    auto start = chrono::high_resolution_clock::now();
-    index.build_index(data_path, meta_path);
-    auto end = chrono::high_resolution_clock::now();
-    auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    cout << "Index built in " << build_time << " ms" << endl;
-    log_index_time(dataset, "bench_kdtree_partition", build_time);
+    if (isFileExists_ifstream(index_path)) {
+        cout << "Loading existing index from " << index_path << "..." << endl;
+        auto start = chrono::high_resolution_clock::now();
+        index.load_index(index_path, data_path);
+        auto end = chrono::high_resolution_clock::now();
+        auto load_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Index loaded in " << load_time << " ms" << endl;
+        log_index_time(dataset, "bench_kdtree_partition", load_time);
+    } else {
+        cout << "Building KD-Tree partitioned index (scan_threshold=" << scan_threshold << ")..." << endl;
+        auto start = chrono::high_resolution_clock::now();
+        index.build_index(data_path, meta_path);
+        auto end = chrono::high_resolution_clock::now();
+        auto build_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+        cout << "Index built in " << build_time << " ms" << endl;
+        log_index_time(dataset, "bench_kdtree_partition", build_time);
+
+        cout << "Saving index to " << index_path << "..." << endl;
+        index.save_index(index_path);
+    }
 
     cout << "  Nodes: " << index.get_num_nodes()
          << " (HNSW: " << index.get_num_hnsw_nodes()

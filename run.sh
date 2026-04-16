@@ -236,13 +236,13 @@ bash mkdir.sh
 
 # for data in "${datasets[@]}"; do
 #   echo "Searching - ${data} (Cube)"
-
-#   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.01 -m "uniform_2d"
-
-#   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
-
-#   ./build/src/bench_post_filtering -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
-
+#
+##   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.01 -m "uniform_2d"
+##
+##   ./build/src/bench_hierarchical_cube -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
+#
+#   OMP_NUM_THREADS=16 ./build/src/bench_post_filtering -d ${data} -s "./DATA/${data}/" -f 0.02 -m "uniform_2d"
+#
 # done
 
 #for data in "${datasets[@]}"; do
@@ -255,7 +255,7 @@ bash mkdir.sh
 #
 #done
 
-# KD-Tree partitioned HNSW benchmarks
+ KD-Tree partitioned HNSW benchmarks
 
 for data in yfcc msmarc10m sift; do
   case $data in
@@ -275,7 +275,7 @@ for data in yfcc msmarc10m sift; do
   for meta in "${metas[@]}"; do
     for ratio in "${ratios[@]}"; do
       echo "[KDTree] $data $meta ratio=$ratio"
-      ./build/src/bench_kdtree_partition -d $data -s ./DATA/$data/ -f $ratio -m $meta
+      OMP_NUM_THREADS=16 ./build/src/bench_kdtree_partition -d $data -s ./DATA/$data/ -f $ratio -m $meta
     done
   done
 done

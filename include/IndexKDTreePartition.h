@@ -8,6 +8,7 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 #include <queue>
 #include <numeric>
 #include <atomic>
@@ -502,6 +503,247 @@ public:
     const std::vector<std::vector<float>> &get_metadata() const { return metadata_; }
     size_t get_attr_dim() const { return attr_dim_; }
     size_t get_num_vectors() const { return num_vectors_; }
+
+    // ========================================================================
+    // Index serialization
+    // ========================================================================
+    void save_index(const std::string &path) {
+        std::ofstream output(path, std::ios::binary);
+        if (!output.is_open()) {
+            throw std::runtime_error("Cannot open index file for writing: " + path);
+        }
+
+        // Save header metadata
+        hnswlib::writeBinaryPOD(output, scan_threshold_);
+        hnswlib::writeBinaryPOD(output, M_);
+        hnswlib::writeBinaryPOD(output, ef_construction_);
+        hnswlib::writeBinaryPOD(output, ef_);
+        hnswlib::writeBinaryPOD(output, force_scan_);
+        hnswlib::writeBinaryPOD(output, attr_dim_);
+        hnswlib::writeBinaryPOD(output, vec_dim_);
+        hnswlib::writeBinaryPOD(output, num_vectors_);
+        hnswlib::writeBinaryPOD(output, root_idx_);
+        hnswlib::writeBinaryPOD(output, num_hnsw_nodes_);
+        hnswlib::writeBinaryPOD(output, num_scan_nodes_);
+
+        // Save metadata_
+        hnswlib::writeBinaryPOD(output, num_vectors_);
+        hnswlib::writeBinaryPOD(output, attr_dim_);
+        for (size_t i = 0; i < num_vectors_; i++) {
+            output.write(reinterpret_cast<const char*>(metadata_[i].data()), attr_dim_ * sizeof(float));
+        }
+
+        // Save per-node data
+        hnswlib::writeBinaryPOD(output, nodes_.size());
+        for (size_t i = 0; i < nodes_.size(); i++) {
+            const auto &node = nodes_[i];
+
+            // Save MBR
+            hnswlib::writeBinaryPOD(output, attr_dim_);
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::writeBinaryPOD(output, node.mbr.min_bounds[d]);
+            }
+            for (size_t d = 0; d < attr_dim_; d++) {
+                hnswlib::writeBinaryPOD(output, node.mbr.max_bounds[d]);
+            }
+
+            // Save node structure
+            hnswlib::writeBinaryPOD(output, node.is_leaf);
+            hnswlib::writeBinaryPOD(output, node.split_dim);
+            hnswlib::writeBinaryPOD(output, node.split_val);
+            hnswlib::writeBinaryPOD(output, node.left_child);
+            hnswlib::writeBinaryPOD(output, node.right_child);
+
+            // Save vector IDs
+            hnswlib::writeBinaryPOD(output, node.vector_ids.size());
+            for (size_t j = 0; j < node.vector_ids.size(); j++) {
+                hnswlib::writeBinaryPOD(output, node.vector_ids[j]);
+            }
+
+            // Save HNSW index data inline to single file
+            bool has_hnsw = (node.hnsw_index != nullptr);
+            hnswlib::writeBinaryPOD(output, has_hnsw);
+            if (has_hnsw) {
+                // Inline HNSW serialization - write directly to output stream
+                auto* hnsw = node.hnsw_index;
+                hnswlib::writeBinaryPOD(output, hnsw->offsetLevel0_);
+                hnswlib::writeBinaryPOD(output, hnsw->max_elements_);
+                hnswlib::writeBinaryPOD(output, hnsw->cur_element_count);
+                hnswlib::writeBinaryPOD(output, hnsw->size_data_per_element_);
+                hnswlib::writeBinaryPOD(output, hnsw->label_offset_);
+                hnswlib::writeBinaryPOD(output, hnsw->maxlevel_);
+                hnswlib::writeBinaryPOD(output, hnsw->enterpoint_node_);
+                hnswlib::writeBinaryPOD(output, hnsw->maxM_);
+                hnswlib::writeBinaryPOD(output, hnsw->maxM0_);
+                hnswlib::writeBinaryPOD(output, hnsw->M_);
+                hnswlib::writeBinaryPOD(output, hnsw->mult_);
+                hnswlib::writeBinaryPOD(output, hnsw->ef_construction_);
+
+                output.write(hnsw->data_level0_memory_, hnsw->cur_element_count * hnsw->size_data_per_element_);
+
+                for (size_t j = 0; j < hnsw->cur_element_count; j++) {
+                    unsigned int linkListSize = hnsw->element_levels_[j] > 0 ? hnsw->size_links_per_element_ * hnsw->element_levels_[j] : 0;
+                    hnswlib::writeBinaryPOD(output, linkListSize);
+                    if (linkListSize)
+                        output.write(hnsw->linkLists_[j], linkListSize);
+                }
+            }
+        }
+
+        output.close();
+        std::cout << "Index saved to " << path << std::endl;
+    }
+
+    bool load_index(const std::string &path, char *data_file) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input.is_open()) {
+            return false;
+        }
+
+        // Load header metadata
+        hnswlib::readBinaryPOD(input, scan_threshold_);
+        hnswlib::readBinaryPOD(input, M_);
+        hnswlib::readBinaryPOD(input, ef_construction_);
+        hnswlib::readBinaryPOD(input, ef_);
+        hnswlib::readBinaryPOD(input, force_scan_);
+        hnswlib::readBinaryPOD(input, attr_dim_);
+        hnswlib::readBinaryPOD(input, vec_dim_);
+        hnswlib::readBinaryPOD(input, num_vectors_);
+        hnswlib::readBinaryPOD(input, root_idx_);
+        hnswlib::readBinaryPOD(input, num_hnsw_nodes_);
+        hnswlib::readBinaryPOD(input, num_scan_nodes_);
+
+        // Load metadata_
+        size_t meta_n, meta_d;
+        hnswlib::readBinaryPOD(input, meta_n);
+        hnswlib::readBinaryPOD(input, meta_d);
+        if (meta_d != attr_dim_) {
+            std::cerr << "ERROR: metadata dimension mismatch - loaded " << meta_d
+                      << " but expected " << attr_dim_ << std::endl;
+            return false;
+        }
+        metadata_.resize(meta_n, std::vector<float>(meta_d));
+        for (size_t i = 0; i < meta_n; i++) {
+            input.read(reinterpret_cast<char*>(metadata_[i].data()), meta_d * sizeof(float));
+        }
+
+        // Load vector data (for static_base_data_)
+        auto *X = new Matrix<float>(data_file);
+        hnswlib::HierarchicalNSWStatic<float>::static_base_data_ = (char *) X->data;
+        data_ = X->data;
+        vec_dim_ = X->d;
+        space_ = new hnswlib::L2Space(X->d);
+
+        // Load per-node data
+        size_t num_nodes;
+        hnswlib::readBinaryPOD(input, num_nodes);
+        nodes_.resize(num_nodes);
+
+        for (size_t i = 0; i < num_nodes; i++) {
+            auto &node = nodes_[i];
+
+            // Load MBR
+            size_t mbr_dim;
+            hnswlib::readBinaryPOD(input, mbr_dim);
+            node.mbr.min_bounds.resize(mbr_dim);
+            node.mbr.max_bounds.resize(mbr_dim);
+            for (size_t d = 0; d < mbr_dim; d++) {
+                hnswlib::readBinaryPOD(input, node.mbr.min_bounds[d]);
+            }
+            for (size_t d = 0; d < mbr_dim; d++) {
+                hnswlib::readBinaryPOD(input, node.mbr.max_bounds[d]);
+            }
+
+            // Load node structure
+            hnswlib::readBinaryPOD(input, node.is_leaf);
+            hnswlib::readBinaryPOD(input, node.split_dim);
+            hnswlib::readBinaryPOD(input, node.split_val);
+            hnswlib::readBinaryPOD(input, node.left_child);
+            hnswlib::readBinaryPOD(input, node.right_child);
+
+            // Load vector IDs
+            size_t num_ids;
+            hnswlib::readBinaryPOD(input, num_ids);
+            node.vector_ids.resize(num_ids);
+            for (size_t j = 0; j < num_ids; j++) {
+                hnswlib::readBinaryPOD(input, node.vector_ids[j]);
+            }
+
+            // Load HNSW index if present
+            bool has_hnsw;
+            hnswlib::readBinaryPOD(input, has_hnsw);
+            if (has_hnsw) {
+                node.hnsw_index = new hnswlib::HierarchicalNSWStatic<float>(space_, node.vector_ids.size(), M_, ef_construction_);
+                node.hnsw_index->set_meta_dim(attr_dim_);
+                node.hnsw_index->set_shared_metadata(&metadata_);
+
+                // Inline HNSW deserialization - read directly from input stream
+                auto* hnsw = node.hnsw_index;
+
+                hnswlib::readBinaryPOD(input, hnsw->offsetLevel0_);
+                hnswlib::readBinaryPOD(input, hnsw->max_elements_);
+                hnswlib::readBinaryPOD(input, hnsw->cur_element_count);
+                hnswlib::readBinaryPOD(input, hnsw->size_data_per_element_);
+                hnswlib::readBinaryPOD(input, hnsw->label_offset_);
+                hnswlib::readBinaryPOD(input, hnsw->maxlevel_);
+                hnswlib::readBinaryPOD(input, hnsw->enterpoint_node_);
+                hnswlib::readBinaryPOD(input, hnsw->maxM_);
+                hnswlib::readBinaryPOD(input, hnsw->maxM0_);
+                hnswlib::readBinaryPOD(input, hnsw->M_);
+                hnswlib::readBinaryPOD(input, hnsw->mult_);
+                hnswlib::readBinaryPOD(input, hnsw->ef_construction_);
+
+                hnsw->data_size_ = space_->get_data_size();
+                hnsw->fstdistfunc_ = space_->get_dist_func();
+                hnsw->dist_func_param_ = space_->get_dist_func_param();
+
+                hnsw->data_level0_memory_ = (char *) malloc(hnsw->max_elements_ * hnsw->size_data_per_element_);
+                if (hnsw->data_level0_memory_ == nullptr)
+                    throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
+                input.read(hnsw->data_level0_memory_, hnsw->cur_element_count * hnsw->size_data_per_element_);
+
+                hnsw->size_links_per_element_ = hnsw->maxM_ * sizeof(hnswlib::tableint) + sizeof(hnswlib::linklistsizeint);
+                hnsw->size_links_level0_ = hnsw->maxM0_ * sizeof(hnswlib::tableint) + sizeof(hnswlib::linklistsizeint);
+                std::vector<std::mutex>(hnsw->max_elements_).swap(hnsw->link_list_locks_);
+                std::vector<std::mutex>(hnsw->MAX_LABEL_OPERATION_LOCKS).swap(hnsw->label_op_locks_);
+
+                hnsw->visited_list_pool_.reset(new hnswlib::VisitedListPool(1, hnsw->max_elements_));
+
+                hnsw->linkLists_ = (char **) malloc(sizeof(void *) * hnsw->max_elements_);
+                if (hnsw->linkLists_ == nullptr)
+                    throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklists");
+                hnsw->element_levels_ = std::vector<int>(hnsw->max_elements_);
+                hnsw->revSize_ = 1.0 / hnsw->mult_;
+                hnsw->ef_ = 10;
+                for (size_t j = 0; j < hnsw->cur_element_count; j++) {
+                    hnsw->label_lookup_[hnsw->getExternalLabel(j)] = j;
+                    unsigned int linkListSize;
+                    hnswlib::readBinaryPOD(input, linkListSize);
+                    if (linkListSize == 0) {
+                        hnsw->element_levels_[j] = 0;
+                        hnsw->linkLists_[j] = nullptr;
+                    } else {
+                        hnsw->element_levels_[j] = linkListSize / hnsw->size_links_per_element_;
+                        hnsw->linkLists_[j] = (char *) malloc(linkListSize);
+                        if (hnsw->linkLists_[j] == nullptr)
+                            throw std::runtime_error("Not enough memory: loadIndex failed to allocate linklist");
+                        input.read(hnsw->linkLists_[j], linkListSize);
+                    }
+                }
+
+                for (size_t j = 0; j < hnsw->cur_element_count; j++) {
+                    if (hnsw->isMarkedDeleted(j)) {
+                        hnsw->num_deleted_ += 1;
+                        if (hnsw->allow_replace_deleted_) hnsw->deleted_elements.insert(j);
+                    }
+                }
+            }
+        }
+
+        input.close();
+        std::cout << "Index loaded from " << path << std::endl;
+        return true;
+    }
 
 private:
     class BBoxFilterMeta : public hnswlib::MetaFilterFunctor {

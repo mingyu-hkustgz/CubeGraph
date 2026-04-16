@@ -225,9 +225,7 @@ namespace hnswlib {
 
 
         int getRandomLevel(double reverse_size) {
-            std::uniform_real_distribution<double> distribution(0.0, 1.0);
-            double r = -log(distribution(level_generator_)) * reverse_size;
-            return (int) r;
+            return 0;// Remove Hierarchical lay for compare
         }
 
         size_t getMaxElements() {
@@ -1322,33 +1320,6 @@ namespace hnswlib {
 
             tableint currObj = enterpoint_node_;
             dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
-
-            for (int level = maxlevel_; level > 0; level--) {
-                bool changed = true;
-                while (changed) {
-                    changed = false;
-                    unsigned int *data;
-
-                    data = (unsigned int *) get_linklist(currObj, level);
-                    int size = getListCount(data);
-                    metric_hops++;
-                    metric_distance_computations+=size;
-
-                    tableint *datal = (tableint *) (data + 1);
-                    for (int i = 0; i < size; i++) {
-                        tableint cand = datal[i];
-                        if (cand < 0 || cand > max_elements_)
-                            throw std::runtime_error("cand error");
-                        dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
-
-                        if (d < curdist) {
-                            curdist = d;
-                            currObj = cand;
-                            changed = true;
-                        }
-                    }
-                }
-            }
 
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
