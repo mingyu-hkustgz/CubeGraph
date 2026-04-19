@@ -36,7 +36,11 @@ BoundingBox generate_filter_bbox(const BoundingBox &global_bbox, float filter_ra
 
     for (size_t d = 0; d < meta_dim; d++) {
         float range = global_bbox.max_bounds[d] - global_bbox.min_bounds[d];
-        float filter_size = range * sqrt(filter_ratio);
+        float base_filter_size = range * pow(filter_ratio, 1.0/meta_dim);  // nth root for n-D
+
+        // Add fluctuation: ±20% variation
+        uniform_real_distribution<float> fluctuation_dist(0.8, 1.2);
+        float filter_size = base_filter_size * fluctuation_dist(rng);
 
         uniform_real_distribution<float> dist(
                 global_bbox.min_bounds[d] + filter_size / 2,
@@ -349,7 +353,7 @@ int main(int argc, char *argv[]) {
     // Evaluate recall@20
     K = 20;
     sprintf(result_path, "./results/recall@%d/%s/%s-kdtree-partition-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q_eval, X, G, answers, K);
     test_vs_recall(Q_eval.data, X.n, query_count, index, Q_eval.d, answers, K, filters);
     answers.clear();
@@ -357,7 +361,7 @@ int main(int argc, char *argv[]) {
     // Evaluate recall@100
     K = 100;
     sprintf(result_path, "./results/recall@%d/%s/%s-kdtree-partition-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q_eval, X, G, answers, K);
     test_vs_recall(Q_eval.data, X.n, query_count, index, Q_eval.d, answers, K, filters);
 

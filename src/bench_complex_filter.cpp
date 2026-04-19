@@ -482,13 +482,13 @@ int main(int argc, char *argv[]) {
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;
     K = 20;
     sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-complex-%s-%.2f-%.2f.log", K, dataset, dataset, meta, filter_ratio, inner_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall_composite(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);
     answers.clear();
     K = 100;
     sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-cube-complex-%s-%.2f-%.2f.log", K, dataset, dataset, meta, filter_ratio, inner_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall_composite(Q.data, X.n, Q.n, index, Q.d, answers, K, filters);
 

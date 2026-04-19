@@ -55,7 +55,11 @@ BoundingBox generate_filter_bbox(const BoundingBox &global_bbox, float filter_ra
 
     for (size_t d = 0; d < meta_dim; d++) {
         float range = global_bbox.max_bounds[d] - global_bbox.min_bounds[d];
-        float filter_size = range * sqrt(filter_ratio);  // sqrt for 2D to get linear dimension
+        float base_filter_size = range * pow(filter_ratio, 1.0/meta_dim);  // nth root for n-D
+
+        // Add fluctuation: ±20% variation
+        uniform_real_distribution<float> fluctuation_dist(0.8, 1.2);
+        float filter_size = base_filter_size * fluctuation_dist(rng);
 
         // Random center within valid range
         uniform_real_distribution<float> dist(
@@ -398,13 +402,13 @@ int main(int argc, char *argv[]) {
     vector<std::priority_queue<std::pair<float, labeltype >>> answers;
     K = 20;
     sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-post-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall(Q.data, X.n, Q.n, *appr_alg, Q.d, meta_dim, answers, K, filters);
     answers.clear();
     K = 100;
     sprintf(result_path, "./results/recall@%d/%s/%s-hnsw-post-%s-%.2f.log", K, dataset, dataset, meta, filter_ratio);
-    freopen(result_path, "a", stdout);
+    freopen(result_path, "w", stdout);
     get_gt(Q, X, G, answers, K);
     test_vs_recall(Q.data, X.n, Q.n, *appr_alg, Q.d, meta_dim, answers, K, filters);
 
