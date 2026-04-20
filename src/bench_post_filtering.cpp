@@ -19,7 +19,7 @@ using namespace hnswlib;
 
 static void log_index_time(const char* dataset, const char* program, long long build_time_ms) {
     char log_path[512];
-    sprintf(log_path, "./results/time-log/%s-%s.log", dataset, program);
+    sprintf(log_path, "./results/time-log/%s/%s-%s.log", dataset, dataset, program);
     ofstream log_file(log_path, ios::app);
     log_file << "index_time_sec: " << (build_time_ms / 1000.0) << "\n";
     log_file.close();

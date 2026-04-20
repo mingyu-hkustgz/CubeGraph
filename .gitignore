@@ -42,3 +42,11 @@ Makefile
 /docs/CUBE_REFINEMENT_SUMMARY.md
 /docs
 /visualizations/*
+/scripts/convert_metadata_to_attrs.py
+/scripts/update_paper_results.py
+/scripts/generate_multi_dim_figure.py
+/scripts/visualize_metadata.py
+/scripts/generate_tikz_figure.py
+/scripts/extract_recall_qps.py
+/scripts/convert_fvecs_to_irange.py
+/scripts/run_irange_benchmark.sh
