@@ -1,0 +1,27 @@
+{
+  "status": "PASS",
+  "box_grid_csvs": 50,
+  "box_grid_rows": 4800,
+  "returned_id_files_verified": 4800,
+  "radius_method_configurations_audited": 48,
+  "cg_radius_rows": 384,
+  "builds": 52,
+  "dynamic_batches": 6,
+  "source_commit": "5a30277",
+  "core_source_commit": "5a30277",
+  "reproduction_driver_commit": "fb793cf",
+  "dynamic_per_width_logs_verified": 12,
+  "tests": {
+    "structural_roundtrip_exhaustive": "PASS at 1/8/128 threads",
+    "complete_cmake_build": "PASS",
+    "ctest": "PASS",
+    "address_undefined_behavior_sanitizers": "PASS; leak detection disabled for existing Matrix ownership"
+  },
+  "paper": {
+    "main_content_pages": 12,
+    "references_pages": 2,
+    "appendix_pages": 7,
+    "baseline_data_files_unchanged": 359,
+    "cg_curve_files_updated": 56
+  }
+}
