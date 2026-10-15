@@ -241,6 +241,7 @@ namespace hnswlib {
             free(data_level0_memory_);
             data_level0_memory_ = nullptr;
             cur_element_count = 0;
+            label_lookup_.clear();
             visited_list_pool_.reset(nullptr);
         }
 
@@ -275,6 +276,15 @@ namespace hnswlib {
             labeltype return_label;
             memcpy(&return_label, (data_level0_memory_ + internal_id * size_data_per_element_ + cube_offset_), sizeof(labeltype));
             return return_label;
+        }
+
+        inline tableint getInternalId(labeltype label) const {
+            std::unique_lock <std::mutex> lock(label_lookup_lock);
+            auto search = label_lookup_.find(label);
+            if (search != label_lookup_.end()) {
+                return search->second;
+            }
+            throw std::runtime_error("Label not found");
         }
 
 
@@ -334,6 +344,13 @@ namespace hnswlib {
         }
 
         void addCrossCubelinks(labeltype internal_id) {
+            // [ABLATION 2026-09-24] With zero cross edges per node there is
+            // nothing to store; skip the adjacent-cube searches as well so the
+            // physical ablation measures the construction cost of cross edges
+            // instead of doing the work and discarding it.
+            if (Cross_edge_counts_ == 0) {
+                return;
+            }
             // Get the cube_id for the current node
             labeltype cube_id = getExternalCubeId(internal_id);
 
@@ -368,6 +385,111 @@ namespace hnswlib {
                     }
                 }
                 cross_edges += Cross_edge_counts_;
+            }
+        }
+
+        // Build a coarser graph from an immutable child layer. Internal IDs are
+        // preserved, including the label mapping; IDs need not equal labels.
+        // One synchronous refinement round followed by reciprocal-edge repair.
+        void mergeChildLayer(const HierarchicalNSWCube& child,
+                             const std::vector<labeltype>& parent_cube) {
+            const size_t n = child.cur_element_count;
+            if (n > max_elements_ || parent_cube.size() != n)
+                throw std::invalid_argument("invalid child layer size");
+            std::vector<std::vector<tableint>> child_entries(cube_entry_points_.size());
+            label_lookup_.reserve(n);
+            for (tableint i = 0; i < n; ++i) {
+                if (parent_cube[i] >= cube_entry_points_.size())
+                    throw std::invalid_argument("invalid parent cube");
+                const auto label = child.getExternalLabel(i);
+                label_lookup_.emplace(label, i);
+                if (cube_entry_points_[parent_cube[i]] == tableint(-1))
+                    cube_entry_points_[parent_cube[i]] = i;
+                if (child.cube_entry_points_[child.getCubeId(i)] == i)
+                    child_entries[parent_cube[i]].push_back(i);
+            }
+            // Complete all records before parallel graph searches can read them.
+#pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < n; ++i) {
+                memset(data_level0_memory_ + i * size_data_per_element_, 0, size_data_per_element_);
+                setExternalLabel(i, child.getExternalLabel(i));
+                setExternalCubeId(i, parent_cube[i]);
+                memcpy(getMetadata(i), child.getMetadata(i), Meta_dim_ * sizeof(metatype));
+            }
+            cur_element_count = n;
+            using Candidates = std::priority_queue<std::pair<dist_t, tableint>,
+                    std::vector<std::pair<dist_t, tableint>>, CompareByFirst>;
+            // Inherit local neighbors and promote child cross edges inside the
+            // parent. Sibling entries bridge disconnected children even when
+            // cross edges are disabled in the physical ablation.
+#pragma omp parallel for schedule(dynamic, 144)
+            for (size_t i = 0; i < n; ++i) {
+                std::vector<tableint> ids;
+                const auto ll = child.get_linklist0(i);
+                const auto edges = reinterpret_cast<const tableint*>(ll + 1);
+                ids.insert(ids.end(), edges, edges + child.getListCount(ll));
+                const auto cross = child.getCrossEdges(i);
+                for (size_t j = 0; j < child.Meta_dim_ * 2 * child.Cross_edge_counts_; ++j)
+                    if (cross[j] != 0 && cross[j] < n && parent_cube[cross[j]] == parent_cube[i])
+                        ids.push_back(cross[j]);
+                for (auto id : child_entries[parent_cube[i]]) ids.push_back(id);
+                std::sort(ids.begin(), ids.end());
+                ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+                Candidates candidates;
+                for (auto id : ids) if (id != i)
+                    candidates.emplace(fstdistfunc_(getDataByInternalId(i), getDataByInternalId(id), dist_func_param_), id);
+                getNeighborsByHeuristic2(candidates, maxM0_);
+                auto dst = get_linklist0(i);
+                setListCount(dst, candidates.size());
+                auto out = reinterpret_cast<tableint*>(dst + 1);
+                size_t j = 0;
+                while (!candidates.empty()) { out[j++] = candidates.top().second; candidates.pop(); }
+            }
+            // Double buffering: every search observes the same inherited graph.
+            const size_t stride = M_ + 1;
+            std::vector<tableint> refined(n * stride);
+#pragma omp parallel for schedule(dynamic, 144)
+            for (size_t i = 0; i < n; ++i) {
+                auto found = searchBaseLayerST(i, getDataByInternalId(i), std::min(ef_construction_, 4 * M_));
+                Candidates candidates;
+                while (!found.empty()) {
+                    if (found.top().second != i) candidates.push(found.top());
+                    found.pop();
+                }
+                getNeighborsByHeuristic2(candidates, M_);
+                refined[i * stride] = candidates.size();
+                size_t j = 1;
+                while (!candidates.empty()) { refined[i * stride + j++] = candidates.top().second; candidates.pop(); }
+            }
+#pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < n; ++i) {
+                auto ll = get_linklist0(i);
+                setListCount(ll, refined[i * stride]);
+                memcpy(ll + 1, &refined[i * stride + 1], refined[i * stride] * sizeof(tableint));
+            }
+            // Each reciprocal update owns only its destination lock. It reads
+            // immutable records for distances, never another mutable edge list.
+#pragma omp parallel for schedule(dynamic, 144)
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 1; j <= refined[i * stride]; ++j) {
+                    const auto id = refined[i * stride + j];
+                    std::lock_guard<std::mutex> guard(link_list_locks_[id]);
+                    auto ll = get_linklist0(id);
+                    auto edges = reinterpret_cast<tableint*>(ll + 1);
+                    const auto count = getListCount(ll);
+                    if (std::find(edges, edges + count, tableint(i)) != edges + count) continue;
+                    if (count < maxM0_) { edges[count] = i; setListCount(ll, count + 1); }
+                    else {
+                        Candidates candidates;
+                        candidates.emplace(fstdistfunc_(getDataByInternalId(id), getDataByInternalId(i), dist_func_param_), i);
+                        for (size_t k = 0; k < count; ++k)
+                            candidates.emplace(fstdistfunc_(getDataByInternalId(id), getDataByInternalId(edges[k]), dist_func_param_), edges[k]);
+                        getNeighborsByHeuristic2(candidates, maxM0_);
+                        setListCount(ll, candidates.size());
+                        size_t k = 0;
+                        while (!candidates.empty()) { edges[k++] = candidates.top().second; candidates.pop(); }
+                    }
+                }
             }
         }
 
@@ -914,6 +1036,16 @@ namespace hnswlib {
             if (data_level0_memory_ == nullptr)
                 throw std::runtime_error("Not enough memory: loadIndex failed to allocate level0");
             input.read(data_level0_memory_, cur_element_count * size_data_per_element_);
+            if (!input) throw std::runtime_error("truncated graph records");
+            std::vector<std::mutex>(max_elements_).swap(link_list_locks_);
+            label_lookup_.reserve(cur_element_count);
+            num_deleted_ = 0;
+            for (tableint i = 0; i < cur_element_count; ++i) {
+                if (!label_lookup_.emplace(getExternalLabel(i), i).second)
+                    throw std::runtime_error("duplicate serialized label");
+                if (isMarkedDeleted(i)) ++num_deleted_;
+            }
+
 
             std::vector<std::mutex>(MAX_LABEL_OPERATION_LOCKS).swap(label_op_locks_);
             visited_list_pool_.reset(new VisitedListPool(1, max_elements));
@@ -1028,7 +1160,7 @@ namespace hnswlib {
 
 
         // Cube-aware addPoint with level
-        void addCubePoint(const void *data_point, labeltype label, labeltype cube_id, metatype* metadata = nullptr) {
+        tableint addCubePoint(const void *data_point, labeltype label, labeltype cube_id, metatype* metadata = nullptr) {
             tableint cur_c = 0;
             {
                 // Checking if the element with the same label already exist
@@ -1049,28 +1181,25 @@ namespace hnswlib {
             }
             std::unique_lock <std::mutex> lock_el(link_list_locks_[cur_c]);
 
-            // Get entry point for this cube
-            tableint currObj;
-            if ((signed)cube_entry_points_[cube_id]==-1) {
-                cube_entry_points_[cube_id] = cur_c;
-                currObj = -1;
-            } else {
-                currObj = cube_entry_points_[cube_id];
-            }
-
-            memset(data_level0_memory_ + cur_c * size_data_per_element_ + offsetLevel0_, 0, size_data_per_element_);
-
-            // Initialisation of the data and label with static data
-            memcpy(getExternalLabeLp(cur_c), &label, sizeof(labeltype));
-            // Set the cube ID
+            // Initialize before publishing. All entry-point reads/writes during
+            // insertion share the registry lock; a per-node lock is insufficient.
+            memset(data_level0_memory_ + cur_c * size_data_per_element_, 0, size_data_per_element_);
+            setExternalLabel(cur_c, label);
             setExternalCubeId(cur_c, cube_id);
-            if(metadata != nullptr)
-                memcpy(getMetadata(cur_c), metadata, sizeof(metatype)*Meta_dim_);
+            if (metadata != nullptr)
+                memcpy(getMetadata(cur_c), metadata, sizeof(metatype) * Meta_dim_);
+            tableint currObj;
+            {
+                std::lock_guard<std::mutex> guard(label_lookup_lock);
+                currObj = cube_entry_points_[cube_id];
+                if (currObj == tableint(-1)) cube_entry_points_[cube_id] = cur_c;
+            }
             if ((signed)currObj != -1) {
                 std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates = searchBaseLayer(
                         currObj, data_point);
                 mutuallyConnectNewElement(data_point, cur_c, top_candidates, false);
             }
+            return cur_c;
         }
 
 
@@ -1178,17 +1307,18 @@ namespace hnswlib {
                     if(j <= size)
                         candidate_id = *(data + j);
                     else {
-                        auto l = j-size;
+                        auto l = j-size-1;
                         tableint neighbor_id = *(adja + l);
+                        if (neighbor_id == 0 || neighbor_id >= cur_element_count) continue;
                         if(cube_set.find(getCubeId(neighbor_id)) == cube_set.end())
                             continue;
                         candidate_id = neighbor_id;
                         is_cross_edge = true;
                     }
-                    if (candidate_id == 0) continue;
+                    if (candidate_id < 0 || static_cast<size_t>(candidate_id) >= cur_element_count) continue;
                     if (is_cross_edge && metrics) metrics->cross_cube_edges++;
 #ifdef USE_SSE
-                    _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
+                    _mm_prefetch((char *) (visited_array + candidate_id), _MM_HINT_T0);
 #endif
                     if (!(visited_array[candidate_id] == visited_array_tag)) {
                         visited_array[candidate_id] = visited_array_tag;
@@ -1304,16 +1434,22 @@ namespace hnswlib {
 #endif
 
                 for (size_t j = 1; j <= size + cross_size; j++) {
-                    int candidate_id = *(data + j);
-                    if((*isIdAllowed)(getMetadata(candidate_id))){
-                        cube_mp[getCubeId(candidate_id)] = true;
-                    }
-                    if(!cube_mp[getCubeId(candidate_id)]) continue;
-                    if (candidate_id == 0) continue;
+                    // Cross edges start after the allocated maxM0_ slots, not
+                    // after the current ordinary degree. Their array is zero-based.
+                    const bool is_cross = j > size;
+                    const tableint candidate_id = is_cross ? adja[j - size - 1] : data[j];
+                    // Legacy serialized cross slots use zero for unused entries.
+                    // Internal node zero remains valid in ordinary adjacency lists.
+                    if ((is_cross && candidate_id == 0) || candidate_id >= cur_element_count) continue;
+                    if (visited_array[candidate_id] == visited_array_tag) continue;
+                    const auto candidate_cube = getCubeId(candidate_id);
+                    const bool allowed = !isIdAllowed || (*isIdAllowed)(getMetadata(candidate_id));
+                    if (allowed) cube_mp[candidate_cube] = true;
+                    if (!cube_mp[candidate_cube]) continue;
                     // Track cross-cube edge traversal when j > size
                     if (j > size && metrics) metrics->cross_cube_edges++;
 #ifdef USE_SSE
-                    _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
+                    _mm_prefetch((char *) (visited_array + candidate_id), _MM_HINT_T0);
 #endif
                     if (!(visited_array[candidate_id] == visited_array_tag)) {
                         visited_array[candidate_id] = visited_array_tag;
@@ -1325,7 +1461,7 @@ namespace hnswlib {
 
                         if (top_candidates.size() < ef_ || lowerBound > dist) {
 
-                            if (!isMarkedDeleted(candidate_id) && ((!isIdAllowed) || (*isIdAllowed)(getMetadata(candidate_id)))) {
+                            if (!isMarkedDeleted(candidate_id) && allowed) {
                                 top_candidates.emplace(dist, candidate_id);
                                 if(!cube_mp[getCubeId(candidate_id)]) cube_mp[getCubeId(candidate_id)] = true;
                             }

@@ -39,6 +39,26 @@ Layer selection is based on filter size vs cube diagonal:
 - Large filters → coarser layers (fewer, larger cubes)
 - Small filters → finer layers (more, smaller cubes)
 
+## Bottom-up construction
+
+The finest adaptive layer is built first. Each parent layer preserves child
+internal IDs and label mappings, inherits local neighbors, and promotes child
+cross edges whose endpoints belong to the same parent cube. Child entry points
+provide candidate connections between siblings, including when cross edges
+are disabled for ablations.
+
+Each parent performs one synchronous refinement round over an immutable
+inherited graph with beam width `min(ef_construction, 4*M)` (64 at the default parameters), followed by reciprocal-edge
+repair and degree pruning. Cross edges are then built between adjacent parent
+cubes. Serialization and query layer order remain coarse to fine. Old index
+files remain readable; rebuilding is required to obtain the new graphs.
+
+Run `bash tests/run_bottom_up.sh` on an x86 Linux host with GCC and OpenMP.
+The test covers 2D/3D/4D, cross edges on/off, constant attributes, neighbor
+ownership and degree bounds, label mappings, save/load equality, and exact
+synthetic recall at exhaustive search width. The vendored HNSWlib headers and
+license are included so a fresh clone has the complete dependency.
+
 ## Building
 
 ### Requirements

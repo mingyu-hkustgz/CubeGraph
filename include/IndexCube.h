@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <fstream>
 #include <queue>
+#include <chrono>
 #include <omp.h>
 
 #define MAX_DIM 16
@@ -204,6 +205,9 @@ private:
     size_t M_, ef_construction_, cross_edge_count_;
     size_t min_points_per_cube_;
     bool verbose = false;
+    // [ABLATION 2026-09-24] -1 = build the full hierarchy (production);
+    // -2 = build only the finest adaptive layer; >= 0 = build only that layer.
+    long long ablation_single_layer_ = -1;
     float *data_;
 
 #ifdef COLLECT_LOG
@@ -236,6 +240,11 @@ public:
 
     void set_global_ef(size_t ef) {
         for (auto &u: layers_) u.hnsw_index->setEf(ef);
+    }
+
+    // [ABLATION 2026-09-24] Select the physical structure to build.
+    void set_ablation_single_layer(long long v) {
+        ablation_single_layer_ = v;
     }
 
 #ifdef COLLECT_LOG
@@ -299,7 +308,8 @@ public:
         size_t cube_id = 0;
         size_t multiplier = 1;
         for (size_t d = 0; d < attr_dim_; d++) {
-            float normalized = (metadata[d] - layer.global_bbox.min_bounds[d]) / layer.cube_width[d];
+            float normalized = layer.cube_width[d] > 0
+                ? std::max(0.0f, (metadata[d] - layer.global_bbox.min_bounds[d]) / layer.cube_width[d]) : 0.0f;
             size_t cube_idx = static_cast<size_t>(normalized);
             // Clamp to valid range
             cube_idx = std::min(cube_idx, layer.cubes_per_dim - 1);
@@ -373,7 +383,7 @@ public:
     }
 
     // Build a single layer
-    void build_layer(size_t layer_id) {
+    void build_layer(size_t layer_id, const LayerConfig* child = nullptr) {
         LayerConfig layer;
         layer.layer_id = layer_id;
         layer.cubes_per_dim = 1 << (layer_id + 1);  // 2^(layer_id+1)
@@ -391,40 +401,37 @@ public:
         // Create HNSW-CUBE index
         layer.hnsw_index = new hnswlib::HierarchicalNSWCube<float>(space, num_vectors_, attr_dim_, layer.total_cubes,
                                                                    cross_edge_count_, M_, ef_construction_);
-        int check_tag = 0, report = 200000;
+        const auto local_start = std::chrono::steady_clock::now();
+        if (child) {
+            std::vector<hnswlib::labeltype> parent_cube(num_vectors_);
+#pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < num_vectors_; ++i)
+                parent_cube[i] = compute_cube_id(metadata_[child->hnsw_index->getExternalLabel(i)], layer);
+            layer.hnsw_index->mergeChildLayer(*child->hnsw_index, parent_cube);
+        } else {
 #pragma omp parallel for schedule(dynamic, 144)
-        for (size_t i = 0; i < num_vectors_; i++) {
-            size_t cube_id = compute_cube_id(metadata_[i], layer);
-            layer.hnsw_index->addCubePoint(data_ + i * vec_dim_, i, cube_id, metadata_[i].data());
-#pragma omp critical
-            {
-                check_tag++;
-                if (check_tag % report == 0) {
-                    std::cerr << "Processing Index - " << check_tag << " / " << num_vectors_ << std::endl;
-                }
+            for (size_t i = 0; i < num_vectors_; i++) {
+                size_t cube_id = compute_cube_id(metadata_[i], layer);
+                layer.hnsw_index->addCubePoint(data_ + i * vec_dim_, i, cube_id, metadata_[i].data());
             }
         }
-
+        const auto local_end = std::chrono::steady_clock::now();
         // Build adjacency list
         build_adjacency_list(layer);
 
         // Set adjacency in HNSW index
         layer.hnsw_index->setAdjacentCubeIds(layer.adjacent_cubes);
 
-        check_tag = 0;
 #pragma omp parallel for schedule(dynamic, 144)
         for (size_t i = 0; i < num_vectors_; i++) {
             layer.hnsw_index->addCrossCubelinks(i);
             assert(layer.hnsw_index->getCubeId(i) < layer.total_cubes);
-#pragma omp critical
-            {
-                check_tag++;
-                if (check_tag % report == 0) {
-                    std::cerr << "Processing Cross - " << check_tag << " / " << num_vectors_ << std::endl;
-                }
-            }
         }
-        layers_.push_back(layer);
+        const auto cross_end = std::chrono::steady_clock::now();
+        std::cout << "BUILD_LAYER id=" << layer_id << " reused=" << (child != nullptr)
+                  << " local_seconds=" << std::chrono::duration<double>(local_end-local_start).count()
+                  << " cross_seconds=" << std::chrono::duration<double>(cross_end-local_end).count() << std::endl;
+        layers_.push_back(std::move(layer));
     }
 
     // Compute adaptive number of layers based on minimum points per cube
@@ -467,18 +474,32 @@ public:
         size_t adaptive_layers = compute_adaptive_num_layers();
         std::cout << "Adaptive layers: " << adaptive_layers
                   << " (min points/cube: " << min_points_per_cube_ << ")" << std::endl;
-        std::cout << "Building " << adaptive_layers << " layers..." << std::endl;
-        num_layers_ = adaptive_layers;
-        for (size_t layer_id = 0; layer_id < adaptive_layers; layer_id++) {
-            std::cout << "Building layer " << layer_id << "..." << std::endl;
-            build_layer(layer_id);
-            size_t points_per_cube = num_vectors_ / layers_[layer_id].total_cubes;
-            std::cout << "Layer " << layer_id << " built: "
-                      << layers_[layer_id].cubes_per_dim << "^" << attr_dim_
-                      << " = " << layers_[layer_id].total_cubes << " cubes"
-                      << " (" << points_per_cube << " points/cube)" << std::endl;
-
+        // [ABLATION 2026-09-24] Optionally build a single layer at the same
+        // resolution the hierarchy would use for it.
+        size_t first_layer = 0, last_layer = adaptive_layers;
+        if (ablation_single_layer_ != -1) {
+            long long k = ablation_single_layer_;
+            if (k == -2) {
+                k = static_cast<long long>(adaptive_layers) - 1;
+            }
+            if (k < 0 || static_cast<size_t>(k) >= adaptive_layers) {
+                throw std::runtime_error("ablation single layer id out of range");
+            }
+            first_layer = static_cast<size_t>(k);
+            last_layer = first_layer + 1;
+            std::cout << "[ABLATION] single-layer build at layer_id=" << k
+                      << " (cubes_per_dim=" << (1u << (first_layer + 1)) << ")" << std::endl;
+        } else {
+            std::cout << "Building " << adaptive_layers << " layers..." << std::endl;
         }
+        num_layers_ = last_layer - first_layer;
+        layers_.reserve(num_layers_);
+        for (size_t layer_id = last_layer; layer_id-- > first_layer;) {
+            const LayerConfig* child = layers_.empty() ? nullptr : &layers_.back();
+            build_layer(layer_id, child);
+        }
+        // Query layer selection and serialization retain coarse-to-fine order.
+        std::reverse(layers_.begin(), layers_.end());
 
         std::cout << "Index built successfully!" << std::endl;
     }
@@ -1011,6 +1032,80 @@ public:
 
     // Get metadata vectors
     const std::vector<std::vector<float>> &get_metadata() const { return metadata_; }
+
+    // =====================================================================
+    // Dynamic Update API
+    // =====================================================================
+
+    // Resize all layers to accommodate additional points
+    void resize_for_updates(size_t additional_points) {
+        for (auto &layer : layers_) {
+            size_t current_max = layer.hnsw_index->getMaxElements();
+            size_t new_max = current_max + additional_points;
+            layer.hnsw_index->resizeIndex(new_max);
+        }
+    }
+
+    // Incrementally add a batch of new points to all layers (thread-safe)
+    // labels: external labels (must be unique and not already in the index)
+    // data: contiguous float array [n * vec_dim_]
+    // metadata: contiguous float array [n * attr_dim_]
+    // Returns: time in milliseconds for the insertion
+    long long add_points_batch(const std::vector<hnswlib::labeltype> &labels,
+                               const float *data,
+                               const float *metadata) {
+        size_t n = labels.size();
+        auto start = std::chrono::high_resolution_clock::now();
+
+        // Expand metadata storage
+        size_t old_meta_size = metadata_.size();
+        metadata_.reserve(old_meta_size + n);
+        for (size_t i = 0; i < n; i++) {
+            metadata_.emplace_back(metadata + i * attr_dim_, metadata + i * attr_dim_ + attr_dim_);
+        }
+        num_vectors_ += n;
+
+        // Process each layer
+        for (auto &layer : layers_) {
+            // Phase 1: Parallel insertion of new points into HNSW graph
+            std::vector<hnswlib::tableint> internal_ids(n);
+            int check_tag = 0, report = 10000;
+            #pragma omp parallel for schedule(dynamic, 64)
+            for (size_t i = 0; i < n; i++) {
+                size_t cube_id = compute_cube_id(metadata_[old_meta_size + i], layer);
+                hnswlib::tableint internal_id = layer.hnsw_index->addCubePoint(
+                    data + i * vec_dim_, labels[i], cube_id,
+                    const_cast<float*>(metadata + i * attr_dim_));
+                internal_ids[i] = internal_id;
+
+                #pragma omp critical
+                {
+                    check_tag++;
+                    if (check_tag % report == 0) {
+                        std::cerr << "Dynamic insert " << check_tag << " / " << n << std::endl;
+                    }
+                }
+            }
+
+            // Phase 2: Parallel cross-cube link building
+            check_tag = 0;
+            #pragma omp parallel for schedule(dynamic, 64)
+            for (size_t i = 0; i < n; i++) {
+                layer.hnsw_index->addCrossCubelinks(internal_ids[i]);
+
+                #pragma omp critical
+                {
+                    check_tag++;
+                    if (check_tag % report == 0) {
+                        std::cerr << "Dynamic cross-links " << check_tag << " / " << n << std::endl;
+                    }
+                }
+            }
+        }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    }
 
     // Save index to file
     void save_index(const std::string &path) {

@@ -38,3 +38,12 @@ add_definitions(-std=c++17 -Ofast -march=core-avx2 -mavx512f -fpic -fopenmp -ftr
 add_subdirectory(src)
 
 
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_bottom_up tests/test_bottom_up.cpp)
+    add_test(NAME bottom_up_graph_invariants
+             COMMAND test_bottom_up ${CMAKE_BINARY_DIR}/test-data)
+    set_tests_properties(bottom_up_graph_invariants PROPERTIES
+                         ENVIRONMENT "OMP_NUM_THREADS=8")
+endif()
