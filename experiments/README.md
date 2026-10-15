@@ -35,3 +35,44 @@ The four physical variants are multi-cross2, multi-cross0,
 singlefinest-cross2 and singlefinest-cross0. The single-layer variants keep the
 same finest geometric resolution. Build separate artifacts for all variants;
 never reuse an index merely because its filename exists.
+
+## Layer retention, radius, and updates
+
+`slice_index.py INDEX_PATH OUTPUT_DIR` retains the finest 1 through 6 layers of
+an existing six-layer 2D index. It preserves geometric resolutions and graph
+files, and records logical file sizes. Query these subset directories with the
+box driver using its default on-the-fly mode.
+
+Build the radius/composition driver with `-ffp-contract=off` to preserve the
+float32 predicate semantics of the frozen workloads:
+
+```sh
+c++ -std=c++17 -O3 -march=core-avx2 -mavx512f -fopenmp \
+  -ffp-contract=off -Iinclude -Ithird_party \
+  experiments/radius/benchmark.cpp -o build/radius
+OMP_NUM_THREADS=1 build/radius cg "$DATA_ROOT/sift" "$INDEX_PATH" \
+  "$RADIUS_WORKLOAD" "$OUTPUT_CSV" 0
+```
+
+The last argument is 0 for the full sweep and 1 for the two-width edge-case
+sweep. `radius/verify_radius_compose.py` independently checks frozen predicates,
+exact ground truth, returned IDs, recall, and wall-clock QPS using NumPy.
+Run it with the SIFT data directory, workload directory and result directory;
+the complete auditor expects CG, ACORN and POST files for all 16 workloads.
+
+```sh
+c++ -std=c++17 -O3 -march=core-avx2 -mavx512f -fopenmp \
+  -Iinclude -Ithird_party experiments/bench_dynamic.cpp -o build/dynamic
+OMP_NUM_THREADS=32 build/dynamic --dataset sift --source "$DATA_ROOT/sift/" \
+  --meta uniform_2d --k 20 --threads 32 --filter-ratio 0.1 --ratio 0.1
+```
+
+Dynamic experiments use a 200,000-vector pool, 100,000 initial vectors and
+insert-only batches of 10%, 30% or 50% of the initial cardinality. Run in a fresh
+working directory: summary files append measurements. Per-width search logs
+are retained under `results/recall@20/`; summary points select the measured
+setting closest to 95% recall and report achieved recall explicitly. These are
+not the main box experiment's common 99% recall operating points. Query timing
+uses a steady wall clock with traversal counters disabled; ID uniqueness and
+predicate membership are checked outside timing. Missing output files or an
+empty search summary are fatal errors.
