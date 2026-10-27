@@ -112,6 +112,7 @@ def main():
     boxes = {a: [] for a in ASPECTS}
     gt = {a: [] for a in ASPECTS}
     details, attempts = [], 0
+    rejected = {'normalized_count_or_feasibility': 0, 'raw_count': 0, 'stored_geometry': 0}
     while len(details) < args.queries:
         attempts += 1
         if attempts > 100 * args.queries:
@@ -123,6 +124,7 @@ def main():
                                       for j in range(2)])
         candidates = {a: calibrated_box(attrs, thresholds, center, target, a, axis) for a in ASPECTS}
         if any(v is None for v in candidates.values()):
+            rejected['normalized_count_or_feasibility'] += 1
             continue
         # Store predicates in the original metadata coordinates, which the
         # index and independent returned-ID auditor consume.
@@ -130,6 +132,18 @@ def main():
             raw_box = (box.astype(float) * scale + domain_min).astype('<f4')
             candidates[a] = raw_box, members(raw_attrs, raw_box)
         if any(abs(len(v[1]) - target) > max(2, int(target * .001)) for v in candidates.values()):
+            rejected['raw_count'] += 1
+            continue
+        # Test the actual serialized predicates, after BOTH float32 casts.
+        # Real-coordinate cancellation can distort a narrow side even when
+        # the normalized box had the requested ratio. Reject the anchor for
+        # every shape, using a tolerance no looser than the independent audit.
+        sides = {a: (box[1].astype(float) - box[0]) / scale
+                 for a, (box, _) in candidates.items()}
+        if any(np.any(side <= 0) or not np.isclose(side.max() / side.min(), a,
+                                                  rtol=1e-4, atol=0)
+               for a, side in sides.items()):
+            rejected['stored_geometry'] += 1
             continue
         record = {'query': qi, 'anchor': center.tolist(), 'long_axis': axis, 'counts': {}}
         for a, (box, ids) in candidates.items():
@@ -139,13 +153,14 @@ def main():
         details.append(record)
         if len(details) % 50 == 0:
             print(f'generated {len(details)}/{args.queries}; attempts={attempts}', flush=True)
-    manifest = {'protocol': 'count-calibrated-contained-2d-boxes-v1', 'dataset': args.dataset,
+    manifest = {'protocol': 'count-calibrated-contained-2d-boxes-v2', 'dataset': args.dataset,
                 'metadata': meta, 'seed': args.seed, 'queries': args.queries, 'k': k,
                 'target_fraction': .01, 'target_count': target, 'aspects': ASPECTS,
                 'domain_min': domain_min.tolist(), 'domain_max': domain_max.tolist(),
                 'aspect_coordinates': 'per-attribute min/max normalized domain',
                 'anchor_sampling': 'uniform over object IDs; jointly reject infeasible anchors',
                 'attempted_anchors': attempts, 'accepted_anchors': len(details),
+                'rejected_anchors': rejected, 'stored_aspect_relative_tolerance': 1e-4,
                 'distance': 'exhaustive float64 squared L2; object-ID tie breaking',
                 'inputs': {name: {'file': p.name, 'sha256': sha(p)} for name, p in paths.items()},
                 'workloads': [], 'query_details': details}
