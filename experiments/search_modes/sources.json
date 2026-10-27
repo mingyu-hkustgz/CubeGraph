@@ -1,0 +1,39 @@
+{
+  "source_batch": "bottom-up-20261015-final",
+  "measurement_date": "2026-10-15",
+  "measurements": [
+    {
+      "file": "sift-pred.csv",
+      "sha256": "4677e3eb8a31d3e8da6a29868f4413867e89cd0acb484510cab17d316c9516c3",
+      "dataset": "sift",
+      "mode": "pred",
+      "archive_path": "sift_uniform_2d.csv"
+    },
+    {
+      "file": "sift-fly.csv",
+      "sha256": "d204dad968322c7ded7c0200defd3a758ba0cc5140e92ec43485ca047d52adef",
+      "dataset": "sift",
+      "mode": "fly",
+      "archive_path": "layers/sift_L6.csv"
+    },
+    {
+      "file": "msmarc10m-pred.csv",
+      "sha256": "d6bbb04222e370ddc6a2b25ca0f013257575bc6d629d5917f751c0f774bd56e1",
+      "dataset": "msmarc10m",
+      "mode": "pred",
+      "archive_path": "msmarc10m_uniform_2d.csv"
+    },
+    {
+      "file": "msmarc10m-fly.csv",
+      "sha256": "88c89dfbc02bcde9186441d597c7d299cfa6c2ad84177a038e2bc29cc1fdc1c9",
+      "dataset": "msmarc10m",
+      "mode": "fly",
+      "archive_path": "layers/msmarc10m_L6.csv"
+    }
+  ],
+  "same_index_evidence": "run_all.sh queries pred on the full index, then slice_index.py asserts L6 directory byte identity and symlinks the same six layer files before fly queries. Query logs and raw IDs remain in the audited archive. Timings are separate sequential passes, not interleaved paired trials.",
+  "core_sha256": {
+    "include/IndexCube.h": "340381c15d04037f34547288bcff318d5445ceca5bc4bec7ba1b1bdc880a3977",
+    "third_party/hnsw-cube.h": "3edc62462112a07c0269bdfa6a4797681d2f7bc4daba9643008b299e5d00df07"
+  }
+}

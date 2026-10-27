@@ -76,3 +76,13 @@ not the main box experiment's common 99% recall operating points. Query timing
 uses a steady wall clock with traversal counters disabled; ID uniqueness and
 predicate membership are checked outside timing. Missing output files or an
 empty search summary are fatal errors.
+
+## Search-mode and shape studies
+
+See [search_modes](search_modes/README.md) for the audited comparison on
+identical six-layer graphs and [aspect_ratio](aspect_ratio/README.md) for the
+new count-calibrated high-aspect-ratio protocol and its pending-run status.
+`CG_RATIO_FILTER=0100` optionally restricts the box driver to the 1% workload;
+without it, the original four-fraction grid is unchanged. For this explicit
+subset only, pass `--ratio 100` to `audit_box.py`; its default still requires
+all 96 measurements.

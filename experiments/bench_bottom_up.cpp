@@ -229,12 +229,23 @@ int main(int argc, char** argv) {
                 return predetermined ? index.predetermined_search(q, k, box) : index.fly_search(q, k, box);
             };
             const std::vector<unsigned> ef_values{20, 32, 64, 128, 256, 512, 1024, 2048};
-            const std::vector<std::pair<std::string, double>> workloads{
+            std::vector<std::pair<std::string, double>> workloads{
                 {dataset + "_" + meta + "_r0100.bin", 0.01},
                 {dataset + "_" + meta + "_r0200.bin", 0.02},
                 {dataset + "_" + meta + "_r0500.bin", 0.05},
                 {dataset + "_" + meta + "_r1000.bin", 0.10},
             };
+            // Explicit subset for shape-controlled workloads. The default
+            // benchmark still requires all four original selectivities.
+            if (const char* selected = std::getenv("CG_RATIO_FILTER")) {
+                const std::string code(selected);
+                if (code != "0100" && code != "0200" && code != "0500" && code != "1000")
+                    throw std::runtime_error("CG_RATIO_FILTER must be 0100, 0200, 0500 or 1000");
+                const double ratio = std::stod(code) / 10000.0;
+                workloads.erase(std::remove_if(workloads.begin(), workloads.end(),
+                    [&](const auto& w) { return w.second != ratio; }), workloads.end());
+                if (workloads.size() != 1) throw std::runtime_error("invalid workload subset");
+            }
 
             for (const auto& [name, ratio] : workloads) {
                 const auto work = load_workload(workload_dir / name);

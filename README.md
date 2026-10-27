@@ -1,6 +1,22 @@
-# CubeGraph: Hierarchical Cube-Based Filtered Vector Similarity Search
+# CubeGraph: A Multi-Resolution Graph Index for Approximate k-Nearest Neighbor Search with Geometric Filters
 
 A high-performance C++ library for filtered approximate nearest neighbor (ANN) search using hierarchical cube-based spatial partitioning. Built on HNSWlib with SIMD acceleration (AVX2).
+
+
+## Paper and reproducibility
+
+- [Paper source and submission PDF](https://github.com/mingyu-hkustgz/Cube-Graph-paper)
+- [Technical report, including the complete appendix](technical_report.pdf)
+- [Shared box, radius, layer and update experiments](experiments/README.md)
+- [Audited predetermined/on-the-fly comparison](experiments/search_modes/README.md)
+- [High-aspect-ratio protocol and pending server run](experiments/aspect_ratio/README.md)
+
+The reported benefits depend on the workload. At 1% qualifying fraction,
+CubeGraph is 1.41–3.89× faster than KHI on all six measured 3D/4D box
+configurations. For SIFT 2D circle and box-minus-circle filters at 2%, it is
+3.25×/3.16× faster than ACORN and 5.45×/5.59× faster than POST at 99% recall
+in every repeat. The complete report retains broader-filter reversals and
+configurations favoring KHI. Complex-predicate comparisons do not include KHI.
 
 ## Key Features
 
@@ -35,7 +51,8 @@ Each layer divides attribute space into `(2^(layer_id+1))^attr_dim` cubes:
 - Layer 1: 4 cubes per dimension (16 total for 2D)
 - Layer 2: 8 cubes per dimension (64 total for 2D)
 
-Layer selection is based on filter size vs cube diagonal:
+Box selection compares each box side with the corresponding cube width;
+radius and polygon selectors use their implemented diagonal-based rules:
 - Large filters → coarser layers (fewer, larger cubes)
 - Small filters → finer layers (more, smaller cubes)
 
