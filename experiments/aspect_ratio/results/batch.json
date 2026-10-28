@@ -1,0 +1,19 @@
+{
+  "measurement_date": "2026-10-27",
+  "source_commits": {
+    "sift": "6afa68d",
+    "yfcc": "121c766"
+  },
+  "core_commit": "5a30277",
+  "batch": "shape-modes-20261027",
+  "formal_archive_sha256": "37945345373cbbf3df9522ba550541bcf6e0a8f914bf352156c4f92471299b84",
+  "execution_archive_sha256": {
+    "sift": "ccef0987a8ca6ff3c88c9c9a7e5ba41c893b57b681cbda2db799b4ce3c1c889e",
+    "yfcc": "eec75214176e561ed5680b81c98b20220b39b78e2550183da6f048008010c716"
+  },
+  "generation_repair": "The first YFCC workload failed strict stored-geometry validation before any query measurements. It remains in the full archive as yfcc-failed-geometry-v1. Commit 121c766 jointly rejects anchors distorted beyond the unchanged 1e-4 aspect tolerance; only the regenerated, fully audited workload is reported.",
+  "raw_id_files_verified": 384,
+  "ground_truth_queries_verified": 8000,
+  "raw_artifacts": "Full logs, frozen queries/GT, source, and 384 returned-ID files retained in the formal archive.",
+  "public_scope": "This compact copy retains all 384 measurements, all eight frozen workloads/GT, manifests, source/index/input hashes, and original audit receipts. Raw returned-ID files are retained in the full archive."
+}

@@ -1,0 +1,6 @@
+{
+  "status": "PASS",
+  "workloads": 4,
+  "queries_per_workload": 1000,
+  "manifest_sha256": "4de9df51f1db76e3ced28be08e315132a3eef50451f4bef82d094c35acc670c4"
+}

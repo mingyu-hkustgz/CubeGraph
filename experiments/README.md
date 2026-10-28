@@ -81,7 +81,7 @@ empty search summary are fatal errors.
 
 See [search_modes](search_modes/README.md) for the audited comparison on
 identical six-layer graphs and [aspect_ratio](aspect_ratio/README.md) for the
-new count-calibrated high-aspect-ratio protocol and its pending-run status.
+completed count-calibrated high-aspect-ratio study and its audited results.
 `CG_RATIO_FILTER=0100` optionally restricts the box driver to the 1% workload;
 without it, the original four-fraction grid is unchanged. For this explicit
 subset only, pass `--ratio 100` to `audit_box.py`; its default still requires

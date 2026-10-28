@@ -31,6 +31,8 @@ Makefile
 *.out
 *.png
 *.bin
+# Frozen predicates and exact ground truth for the published shape study.
+!experiments/aspect_ratio/results/*/workloads/a*/*.bin
 # DATA
 /DATA
 

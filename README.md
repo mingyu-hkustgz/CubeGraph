@@ -9,7 +9,7 @@ A high-performance C++ library for filtered approximate nearest neighbor (ANN) s
 - [Technical report, including the complete appendix](technical_report.pdf)
 - [Shared box, radius, layer and update experiments](experiments/README.md)
 - [Audited predetermined/on-the-fly comparison](experiments/search_modes/README.md)
-- [High-aspect-ratio protocol and pending server run](experiments/aspect_ratio/README.md)
+- [Audited high-aspect-ratio results and protocol](experiments/aspect_ratio/README.md)
 
 The reported benefits depend on the workload. At 1% qualifying fraction,
 CubeGraph is 1.41–3.89× faster than KHI on all six measured 3D/4D box
@@ -17,6 +17,11 @@ configurations. For SIFT 2D circle and box-minus-circle filters at 2%, it is
 3.25×/3.16× faster than ACORN and 5.45×/5.59× faster than POST at 99% recall
 in every repeat. The complete report retains broader-filter reversals and
 configurations favoring KHI. Complex-predicate comparisons do not include KHI.
+On MSMARCO10M 4D at 1%, the 2.17x query-throughput gain over KHI accompanies
+53.9% less serialized index space (8.966 versus 19.467 GB). The complete
+high-aspect-ratio sweep covers SIFT1M and YFCC, ratios 1/4/16/32 and both modes;
+all 16 combinations reach 99% recall, with lower throughput on thinner boxes.
+
 
 ## Key Features
 
