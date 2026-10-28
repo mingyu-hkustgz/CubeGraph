@@ -239,11 +239,10 @@ int main(int argc, char** argv) {
             // benchmark still requires all four original selectivities.
             if (const char* selected = std::getenv("CG_RATIO_FILTER")) {
                 const std::string code(selected);
-                if (code != "0100" && code != "0200" && code != "0500" && code != "1000")
-                    throw std::runtime_error("CG_RATIO_FILTER must be 0100, 0200, 0500 or 1000");
+                if (code != "0050" && code != "0100" && code != "0200" && code != "0500" && code != "1000")
+                    throw std::runtime_error("CG_RATIO_FILTER must be 0050, 0100, 0200, 0500 or 1000");
                 const double ratio = std::stod(code) / 10000.0;
-                workloads.erase(std::remove_if(workloads.begin(), workloads.end(),
-                    [&](const auto& w) { return w.second != ratio; }), workloads.end());
+                workloads = {{dataset + "_" + meta + "_r" + code + ".bin", ratio}};
                 if (workloads.size() != 1) throw std::runtime_error("invalid workload subset");
             }
 

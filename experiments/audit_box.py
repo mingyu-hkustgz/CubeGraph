@@ -6,7 +6,7 @@ assert kind in ('cube','acorn')
 ratios=[100,200,500,1000]
 if len(sys.argv)>7:
  assert len(sys.argv)==9 and sys.argv[7]=='--ratio'
- ratios=[int(sys.argv[8])];assert ratios[0] in (100,200,500,1000)
+ ratios=[int(sys.argv[8])];assert ratios[0] in (50,100,200,500,1000)
 rows=list(csv.DictReader(p.open()));assert len(rows)==len(ratios)*(24 if kind=='cube' else 9)
 b=(data/ds/f'{ds}_metadata_{meta}.bin').read_bytes();n,d=struct.unpack_from('<QQ',b);attrs=np.frombuffer(b,dtype='<f4',offset=16).reshape(n,d)
 keys=set();verified=[];cached={}
