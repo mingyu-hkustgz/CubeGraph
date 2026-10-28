@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "dataset": "wikitext1m",
+  "metadata": "real_2d",
+  "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c",
+  "vectors_and_query_order_verified": true,
+  "metadata_verified": true,
+  "integer_bounds_exact": true,
+  "generated_sha256": {
+    "fixedcard_r0050_gt.bin": "b85f4b35d92f884bd1cfbee2f1403efb7420755d5a539470fbb2ebfd111ba799",
+    "fixedcard_r0050_constraints.bin": "563c081c683d6001b81a2ee29e0d1cac5e406f0c0ea50c97d4ac8989b334b300",
+    "fixedcard_r0050_ranges.bin": "698537bb45284ad0bcba8c705cb88132be5fd4a54d4a80739f1b034d5ddaef4d"
+  }
+}

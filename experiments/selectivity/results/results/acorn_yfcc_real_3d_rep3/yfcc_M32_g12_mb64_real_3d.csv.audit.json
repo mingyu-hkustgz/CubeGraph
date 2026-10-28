@@ -1,0 +1,604 @@
+{
+  "status": "CHECKED_WITH_INVALID_CELLS",
+  "csv_sha256": "10c6aba61144ee72908a46f0bb523110a57169794e54b66b2f9bc648308f6591",
+  "invalid_cells": 9,
+  "rows": [
+    {
+      "ratio": 50,
+      "ef": 20,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 14,
+      "recall": 0.32245,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 685,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "2e4db588d57ece38933ffad394773d311266f307777df475d416a3567ace45a3",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 32,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 14,
+      "recall": 0.45775,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 685,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "4064f2df8974578b12a0b9ae51d97fbfd579eceec7bec9105069b12fa90fff13",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 64,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 14,
+      "recall": 0.6421,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 685,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "9d57061258d91828053f7214d0d44fc2520b40ad0bcf0e11d8d680666617a06c",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 128,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.7522,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "e332e4aa0d0ef21352ec8955d161100e4aa1ca88ae18b1a47de74a467adb2239",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 256,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.8132,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "5814beae097e47007987ce551f84a6087af9e241883f24aa95673bea7ad3e7bc",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 512,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.84325,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "e5162cad71e01e32a743e89d3250b1b3fcff1647e48c2017ce51578d29bf7db1",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 1024,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.8586,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "bb36358f360bb2ca6f0c7a0491968c6e8259aaecb4fd1465f0d18d5df94a8322",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 2048,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.86715,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "5ba66747fb6aa9f5fb7c44853db699e67956a6063549081bbe3dfdd628758bac",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    },
+    {
+      "ratio": 50,
+      "ef": 4096,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 13,
+      "recall": 0.87,
+      "examples": [
+        {
+          "query": 9,
+          "object_id": 118295
+        },
+        {
+          "query": 77,
+          "object_id": 118295
+        },
+        {
+          "query": 109,
+          "object_id": 118295
+        },
+        {
+          "query": 137,
+          "object_id": 118295
+        },
+        {
+          "query": 508,
+          "object_id": 118295
+        },
+        {
+          "query": 600,
+          "object_id": 118295
+        },
+        {
+          "query": 624,
+          "object_id": 118295
+        },
+        {
+          "query": 781,
+          "object_id": 118295
+        },
+        {
+          "query": 862,
+          "object_id": 118295
+        },
+        {
+          "query": 881,
+          "object_id": 118295
+        },
+        {
+          "query": 884,
+          "object_id": 118295
+        },
+        {
+          "query": 889,
+          "object_id": 118295
+        },
+        {
+          "query": 930,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "32ab75052390c1bd3a926b834bdd60c6d2317be323c5c761bd2361edf0ffee07",
+      "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f"
+    }
+  ]
+}

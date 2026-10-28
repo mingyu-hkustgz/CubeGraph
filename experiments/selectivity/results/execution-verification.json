@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "source_commit": "6b3972e",
+  "instrumentation_commit": "b733dfd",
+  "invalid_measurement_cells": 291,
+  "verified_source_files": 72,
+  "verified_native_source_files": 35,
+  "archive_sha256": "a932c83e31c1556772a49e450ac05ba5bd2989301b5ae5b742172f290c5a637c",
+  "source_archive_sha256": "36d35ede00066f263e210ba6cd5229cf817805908161b8ab82c12513b8764612",
+  "compiled_hashes_verified": true,
+  "fixture_gt_queries": 7000
+}

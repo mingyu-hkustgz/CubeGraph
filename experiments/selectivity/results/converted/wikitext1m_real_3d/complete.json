@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "dataset": "wikitext1m",
+  "metadata": "real_3d",
+  "workload_sha256": "f015400c6618d2e8982a526b92c958a79578a50c35cb7db191b8bbf0647d3a9c",
+  "vectors_and_query_order_verified": true,
+  "metadata_verified": true,
+  "integer_bounds_exact": false,
+  "generated_sha256": {
+    "fixedcard_r0050_gt.bin": "4b4b5f583ca1e7284d9311fe8bfcbc94e660bf4e76d81d75e7a38224c7bdb7b6",
+    "fixedcard_r0050_constraints.bin": "595bc78f32be56e1d3722d2feeb911c1838ac608138cfbe761c3307ab473cde2"
+  }
+}

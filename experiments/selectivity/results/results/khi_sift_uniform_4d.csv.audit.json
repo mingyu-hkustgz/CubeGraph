@@ -1,0 +1,9 @@
+{
+  "pass": true,
+  "csv_sha256": "f9dc015afd0824580da8c4c295494ca63c6038762b028c4fed9c97dc9927fcbd",
+  "ids_sha256": "9ef3c5bf21606acccd41ab1b2acfa307a1a743ca7d893b40c11dfe5899058f63",
+  "parameter_rows": 24,
+  "query_outputs_checked": 24000,
+  "independently_rescored": true,
+  "original_float_predicates_checked": true
+}

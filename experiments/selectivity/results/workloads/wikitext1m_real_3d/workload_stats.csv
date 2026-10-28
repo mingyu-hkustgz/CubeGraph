@@ -1,0 +1,2 @@
+dataset,metadata,mode,target_ratio,queries,k,measured_selectivity,min_candidates,max_candidates,prep_seconds,seed
+wikitext1m,real_3d,fixed-cardinality,0.005,1000,20,0.005000418483,4910,4912,0.358446645,42

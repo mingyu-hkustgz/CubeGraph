@@ -1,0 +1,384 @@
+{
+  "status": "CHECKED_WITH_INVALID_CELLS",
+  "csv_sha256": "6dcad2a1be4d9afcf63d2f9b5b050684ba1a72e458dd6685b4481da8bb6c6b9e",
+  "invalid_cells": 9,
+  "rows": [
+    {
+      "ratio": 50,
+      "ef": 20,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 8,
+      "recall": 0.29165,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 754,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "52b46b0f5e7ee817a4c988b345dfe5d3473db18a69cf7a95aa14198d307604ee",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 32,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 8,
+      "recall": 0.42405,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 754,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "70af52b99c31dc2e38339f53bbe37deecd061dd03e48f1ede9427a63a00199d8",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 64,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.6053,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "c5e23f20fbab3fb94a50183d3b9b155ec1ec9d584036d0690d8f27be56d5b776",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 128,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.72435,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "9d0d478632cc3df9992239a0e6cdd3b9731cf2e5dbc7d7855623602d56bff03c",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 256,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.79155,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "02f37cafb5f3bf46557e6306125a254d53309ae4829d64c71d4b608c1212a588",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 512,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.8265,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "c214d6d17d2be019bd81b06306cf5e586d14439421d5188a27fbec24caf53de9",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 1024,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.84395,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "df3df13474003b49716d6dfb2712cf3f0a6acd85dd20cd9f2d609df8c4f29f82",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 2048,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.8535,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "2694076910b5093f6c4f7a299f515ec6a29aeb97b1d9fb5d6da1f806615237fb",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    },
+    {
+      "ratio": 50,
+      "ef": 4096,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 7,
+      "recall": 0.8575,
+      "examples": [
+        {
+          "query": 68,
+          "object_id": 118295
+        },
+        {
+          "query": 115,
+          "object_id": 118295
+        },
+        {
+          "query": 440,
+          "object_id": 118295
+        },
+        {
+          "query": 472,
+          "object_id": 118295
+        },
+        {
+          "query": 577,
+          "object_id": 118295
+        },
+        {
+          "query": 764,
+          "object_id": 118295
+        },
+        {
+          "query": 811,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "e30e84f687b5ef21b9273f7e4d9eb152e6588e21aef8cc04e202574e99dbcc00",
+      "workload_sha256": "007fa7f2e85f39ea3199f47e0f0cb7277c5d33719efd11fe3240f1657c6c07d8"
+    }
+  ]
+}

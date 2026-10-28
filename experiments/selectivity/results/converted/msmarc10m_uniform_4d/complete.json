@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "dataset": "msmarc10m",
+  "metadata": "uniform_4d",
+  "workload_sha256": "898740f57bde1e0810d4c5ecba16833793e16a0d0ab84aa6d7fc82c603be6518",
+  "vectors_and_query_order_verified": true,
+  "metadata_verified": true,
+  "integer_bounds_exact": false,
+  "generated_sha256": {
+    "fixedcard_r0050_gt.bin": "413a77ebda9a993329901a65cd7b18527f0d57020b062814b02825c5497e01d3",
+    "fixedcard_r0050_constraints.bin": "ea5006c0c22bf0a1d1045775f9e3338e99ddd178f24f2119bd4d32e019443d7e"
+  }
+}

@@ -1,0 +1,2 @@
+dataset,metadata,mode,target_ratio,queries,k,measured_selectivity,min_candidates,max_candidates,prep_seconds,seed
+msmarc10m,uniform_2d,fixed-cardinality,0.005,1000,20,0.0050000051,49999,50002,3.945610744,42

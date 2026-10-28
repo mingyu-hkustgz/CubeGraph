@@ -1,0 +1,2 @@
+dataset,metadata,mode,target_ratio,queries,k,measured_selectivity,min_candidates,max_candidates,prep_seconds,seed
+sift,uniform_4d,fixed-cardinality,0.005,1000,20,0.00499997,4999,5001,0.431309331,42

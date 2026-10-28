@@ -1,0 +1,2 @@
+dataset,metadata,mode,target_ratio,queries,k,measured_selectivity,min_candidates,max_candidates,prep_seconds,seed
+yfcc,real_2d,fixed-cardinality,0.005,1000,20,0.00504216747,4918,9341,0.302108353,42

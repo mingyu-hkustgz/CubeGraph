@@ -1,0 +1,19 @@
+{
+  "batch": "selectivity-20261028",
+  "measurement_date": "2026-10-28",
+  "initial_source_commit": "6b3972e",
+  "instrumentation_source_commit": "b733dfd",
+  "formal_archive_sha256": "a932c83e31c1556772a49e450ac05ba5bd2989301b5ae5b742172f290c5a637c",
+  "source_archives": {
+    "source-b733dfd.tar": "cda7808cc52262c2a35352501aff8eb45623c00d8898ab135942ab6df10cb6f2",
+    "source-6b3972e.tar": "36d35ede00066f263e210ba6cd5229cf817805908161b8ab82c12513b8764612"
+  },
+  "core_unchanged": true,
+  "indexes_reused": true,
+  "raw_id_files_verified": 1100,
+  "independent_gt_queries": 14000,
+  "measurement_cells": 1422,
+  "invalid_measurement_cells": 291,
+  "invalid_policy": "All raw measurements retained. Predicate-invalid cells remain FAIL_PREDICATE; curves and operating points require valid output in every repeat. No baseline search or returned IDs were repaired.",
+  "public_scope": "All CSV measurements, predicates/GT, conversion files, input/index/source hashes, audit receipts, and diagnostic failure evidence. Full returned IDs, binaries, execution sources, logs and original failed attempt are retained in the immutable archive."
+}

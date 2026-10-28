@@ -1,11 +1,13 @@
 # 0.5% selectivity extension
 
-Prepared October 28, 2026. Formal measurement and verification are pending;
-no result or speedup is claimed by this protocol document.
+Completed October 29, 2026. The complete raw archive, execution sources,
+all returned IDs and independent ground-truth audits passed local collection
+verification. This verifies the evidence, including failed baseline outputs;
+it does not mean every method returned valid results.
 
 This adds a more selective workload to the existing four-fraction study. It
 reuses every frozen index and leaves all 1/2/5/10% measurements untouched.
-The intended main-paper grid is 0.5/1/2/5%; the 10% curves remain in the
+The main-paper grid is 0.5/1/2/5%; the 10% curves remain in the
 supplementary report so broader-filter reversals are still visible.
 
 ## Fixed protocol
@@ -38,10 +40,12 @@ supplementary report so broader-filter reversals are still visible.
   supported methods (CG on-the-fly, ACORN, POST) share predicates and exact
   GT; independent audits check all 4,000 queries and every returned ID.
 
-The full extension has 14,000 independently checked GT queries, 78 result
-CSVs and 1,422 measurement cells. These are planned counts, not a completion
-receipt. No index construction, high-aspect-ratio sweep, or old measurement is
-rerun. New experiment outputs must be in a separate directory.
+The completed extension has 14,000 independently checked GT queries, 78 result
+CSVs, 1,422 measurement cells, 58 method/workload groups and 1,100 archived
+returned-ID files. Native adapters store multiple cells in one ID file.
+Of the measurements, 291 ACORN cells contain predicate violations; these are
+excluded from valid curves and operating points. No index construction,
+high-aspect-ratio sweep, or old measurement was rerun.
 
 ## Execution
 
@@ -73,3 +77,50 @@ Structural output errors (range, negative IDs other than -1, duplicates) still
 abort. Curves and operating points require all three repetitions to be valid.
 The initial stopped attempt and diagnostic are retained with their original
 sources and binaries; already completed other-method measurements are reused.
+
+
+## Results and evidence
+
+[summary.csv](results/summary.csv) reports every operating point, valid-width
+count and invalid-cell count. [measurements.csv](results/measurements.csv)
+retains all 1,422 rows, including the invalid ones. A qualifying operating
+point requires predicate-valid output and at least 99% recall in all three
+repeats. The tables use INV when no width is valid in all repeats, and N/R
+when valid widths exist but none reaches the recall floor. Blank QPS in the
+CSV means no qualifying operating point, never zero throughput.
+
+At 0.5%, CG/KHI is 1.18–3.79× on all six 3D/4D configurations and CG wins
+nine of ten box cases; YFCC 2D favors KHI (0.54×). MSMARCO10M 3D/4D gives
+3.20×/2.96×. Only CG reaches the common floor in all four complex cases;
+KHI is not evaluated on those predicates. SIFT/MSMARCO 2D predetermined/fly
+ratios are 1.013×/0.993×, respectively. All original 1/2/5/10% results,
+including broader-filter reversals, remain in the technical report.
+
+Actual qualifying counts are recorded in the workload audit receipts and
+Appendix A.13. Tied real attributes produce per-query deviations, including
+4,918–9,341 objects for YFCC 2D (mean 0.50422%). These queries are retained;
+no workload is selected based on relative method performance.
+
+The public `results/` directory includes raw CSVs, predicates and GT,
+converted native constraints, per-cell audit receipts, provenance, the stopped
+attempt and its diagnostic, plus full-collection and execution-source receipts.
+The full raw-ID archive was SHA-verified locally before publishing; its
+transfer SHA is `a932c83e31c1556772a49e450ac05ba5bd2989301b5ae5b742172f290c5a637c`.
+The original and instrumentation-v2 execution commits are `6b3972e` and
+`b733dfd`; their source and compiled-binary manifests are retained. Search
+libraries and frozen indexes are unchanged.
+
+Recompute the public summary without requiring the bulk raw-ID archive:
+
+```sh
+python3 experiments/selectivity/summarize.py experiments/selectivity/results \
+  --receipts-only --output-dir /tmp/cubegraph-selectivity-check
+cmp /tmp/cubegraph-selectivity-check/summary.csv experiments/selectivity/results/summary.csv
+cmp /tmp/cubegraph-selectivity-check/measurements.csv experiments/selectivity/results/measurements.csv
+```
+
+Receipt-only verification checks the public evidence and regenerates both
+CSVs byte for byte. It does not re-audit raw IDs; the original
+[collection-verification.json](results/collection-verification.json) records
+that completed full audit. Run without `--receipts-only` against the complete
+local archive to verify all 1,100 returned-ID files again.

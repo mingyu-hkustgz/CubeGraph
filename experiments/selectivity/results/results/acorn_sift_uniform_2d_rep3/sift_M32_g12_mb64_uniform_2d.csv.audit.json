@@ -1,0 +1,344 @@
+{
+  "status": "CHECKED_WITH_INVALID_CELLS",
+  "csv_sha256": "a05ac24eae7fcbc1ee750f54e83ea17a98954be8467349bcc015b0fed63f3758",
+  "invalid_cells": 9,
+  "rows": [
+    {
+      "ratio": 50,
+      "ef": 20,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 20,
+      "recall": 0.39445,
+      "examples": [
+        {
+          "query": 145,
+          "object_id": 118295
+        },
+        {
+          "query": 147,
+          "object_id": 118295
+        },
+        {
+          "query": 281,
+          "object_id": 118295
+        },
+        {
+          "query": 315,
+          "object_id": 118295
+        },
+        {
+          "query": 342,
+          "object_id": 118295
+        },
+        {
+          "query": 343,
+          "object_id": 118295
+        },
+        {
+          "query": 417,
+          "object_id": 118295
+        },
+        {
+          "query": 512,
+          "object_id": 118295
+        },
+        {
+          "query": 617,
+          "object_id": 118295
+        },
+        {
+          "query": 745,
+          "object_id": 118295
+        },
+        {
+          "query": 791,
+          "object_id": 118295
+        },
+        {
+          "query": 798,
+          "object_id": 118295
+        },
+        {
+          "query": 846,
+          "object_id": 118295
+        },
+        {
+          "query": 890,
+          "object_id": 118295
+        },
+        {
+          "query": 897,
+          "object_id": 118295
+        },
+        {
+          "query": 904,
+          "object_id": 118295
+        },
+        {
+          "query": 916,
+          "object_id": 118295
+        },
+        {
+          "query": 958,
+          "object_id": 118295
+        },
+        {
+          "query": 966,
+          "object_id": 118295
+        },
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "8b9156dd7e6b97aeddf054359d9129cf1300d88b259295a80d6461a121786aa9",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 32,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 15,
+      "recall": 0.53425,
+      "examples": [
+        {
+          "query": 145,
+          "object_id": 118295
+        },
+        {
+          "query": 147,
+          "object_id": 118295
+        },
+        {
+          "query": 281,
+          "object_id": 118295
+        },
+        {
+          "query": 315,
+          "object_id": 118295
+        },
+        {
+          "query": 342,
+          "object_id": 118295
+        },
+        {
+          "query": 343,
+          "object_id": 118295
+        },
+        {
+          "query": 512,
+          "object_id": 118295
+        },
+        {
+          "query": 617,
+          "object_id": 118295
+        },
+        {
+          "query": 791,
+          "object_id": 118295
+        },
+        {
+          "query": 798,
+          "object_id": 118295
+        },
+        {
+          "query": 846,
+          "object_id": 118295
+        },
+        {
+          "query": 897,
+          "object_id": 118295
+        },
+        {
+          "query": 916,
+          "object_id": 118295
+        },
+        {
+          "query": 966,
+          "object_id": 118295
+        },
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "95308564cf4e097fc4d80663c2965b4a6f7bcf8021a3c46cab41df16e32ace65",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 64,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 10,
+      "recall": 0.7043,
+      "examples": [
+        {
+          "query": 145,
+          "object_id": 118295
+        },
+        {
+          "query": 147,
+          "object_id": 118295
+        },
+        {
+          "query": 315,
+          "object_id": 118295
+        },
+        {
+          "query": 342,
+          "object_id": 118295
+        },
+        {
+          "query": 343,
+          "object_id": 118295
+        },
+        {
+          "query": 512,
+          "object_id": 118295
+        },
+        {
+          "query": 791,
+          "object_id": 118295
+        },
+        {
+          "query": 846,
+          "object_id": 118295
+        },
+        {
+          "query": 897,
+          "object_id": 118295
+        },
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "6c7edb646b7697dd2b1931b8f32520b5a3544c6acefe446fd77f7f2548b4d963",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 128,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 4,
+      "recall": 0.80835,
+      "examples": [
+        {
+          "query": 147,
+          "object_id": 118295
+        },
+        {
+          "query": 512,
+          "object_id": 118295
+        },
+        {
+          "query": 791,
+          "object_id": 118295
+        },
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "c38f2a330185e9fd260e132ec00b7371d32d918c5a68cee75fce255d8205170f",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 256,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 2,
+      "recall": 0.8751,
+      "examples": [
+        {
+          "query": 147,
+          "object_id": 118295
+        },
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "4d84fdad5481bf04b6862daf3391726582a687fda8735daca2520cd61ba75c7a",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 512,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.9042,
+      "examples": [
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "8ea3b643d32bac24fb8a098e72793844793dd25db933d5a8a44c62e9d6e58253",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 1024,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.9139,
+      "examples": [
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "759b936c21e5aa338c0498b85f9173520f74114902162e982a0625885bfb7312",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 2048,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.9173,
+      "examples": [
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "c23006a8134639ea03e8c25fce1894f5f7718f7f6ba4302dcd73547c46733e4b",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    },
+    {
+      "ratio": 50,
+      "ef": 4096,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.9193,
+      "examples": [
+        {
+          "query": 987,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "07c38afea8be26bdfbbdc780d7b291c04317943c97ed844dc21eec03f949f32a",
+      "workload_sha256": "a8e25e3b027c596b8a6879f6df0c6d266da8b350ffc49f8ee0ecf3b5793fe32e"
+    }
+  ]
+}

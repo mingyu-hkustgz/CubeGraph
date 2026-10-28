@@ -1,0 +1,160 @@
+{
+  "status": "CHECKED_WITH_INVALID_CELLS",
+  "csv_sha256": "2794d124a115491c447dae1399f06fbb9c0201e9fca219731e6819563f5b7056",
+  "invalid_cells": 9,
+  "rows": [
+    {
+      "ratio": 50,
+      "ef": 20,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.23385,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "4fae516fbda84ba97f8e76247a2f48bb81aa51d4b848d392d9ad77a237eb3c7e",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 32,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.36285,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "b86c1963a35f96b8ff8e843c136a45d38dee3d86a19f91c5c0f13f4098b5bcea",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 64,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.55875,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "e31c0ec0277163faa9bfbc1456bed9e4d9fa6bdff1885dba95be9055007d8bce",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 128,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.7041,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "545d7e0d2258f6b1a6c1f3130fb2661a001227142075ef61a53fa759c3b30811",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 256,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.79105,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "01c4b0d2b0429060f92a548724a0605b99388451bb835434b75fcd9d01755556",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 512,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.845,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "145ce0bcc693598e18c6db6abbb53ac0bd078b3f1aee457fad2540350dc3f244",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 1024,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.8718,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "30eb4dee34256bf292bdbd83dcec30a4aaa2b8949ccc6a33df93fe136b6020ca",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 2048,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.88535,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "9871d360888d07dc522a1781757b61645595976446d7d9d3d9cb17bcce7da158",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    },
+    {
+      "ratio": 50,
+      "ef": 4096,
+      "repeat": 1,
+      "valid": false,
+      "predicate_violations": 1,
+      "recall": 0.89205,
+      "examples": [
+        {
+          "query": 33,
+          "object_id": 118295
+        }
+      ],
+      "result_status": "FAIL_PREDICATE",
+      "ids_sha256": "4972864bb5a22a3a3d00d61bc48cb877178678d596c0fa9f7c004391802bec8b",
+      "workload_sha256": "d4c10bb0261e49428a868099b52661eb3fb4f5bb3dfec82cfa8a84289250d31c"
+    }
+  ]
+}

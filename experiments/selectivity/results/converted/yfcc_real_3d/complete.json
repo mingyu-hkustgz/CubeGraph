@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "dataset": "yfcc",
+  "metadata": "real_3d",
+  "workload_sha256": "c7180d7e8fc8f31be6d42b9bd4a15b6af8c2529f1414fe28aeba423741e0716f",
+  "vectors_and_query_order_verified": true,
+  "metadata_verified": true,
+  "integer_bounds_exact": false,
+  "generated_sha256": {
+    "fixedcard_r0050_gt.bin": "a144eb07d30477b5b72980425c27bf84a1f2ac66f7173be243960873aabfb4a6",
+    "fixedcard_r0050_constraints.bin": "5b8847e408f4ff62982a79ad63005cbb21c00ea97b133a16906a85c6a26d71bc"
+  }
+}

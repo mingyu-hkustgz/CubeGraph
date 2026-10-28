@@ -1,0 +1,17 @@
+{
+  "initial": "6b3972e",
+  "instrumentation_v2": "b733dfd",
+  "reason": "Preserve and classify ACORN predicate-invalid cells, without changing search/indexes",
+  "initial_source": "code",
+  "instrumentation_source": "code-v2",
+  "replaced_binaries": [
+    "bin/acorn-v2",
+    "bin/radius_acorn-v2"
+  ],
+  "unchanged_completed": [
+    "cg_sift_uniform_2d",
+    "post_sift_uniform_2d",
+    "khi_sift_uniform_2d",
+    "irange_sift_uniform_2d"
+  ]
+}

@@ -56,3 +56,13 @@ Makefile
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Frozen 0.5% predicates/GT and native converted constraints
+!experiments/selectivity/results/workloads/*/*.bin
+!experiments/selectivity/results/converted/*/*.bin
+!experiments/selectivity/results/radius/workloads/*.bin
+# Original compact execution/audit logs
+!experiments/selectivity/results/logs/*.log
+!experiments/selectivity/results/diagnosis/*.log
+!experiments/selectivity/results/attempts/*.log
+!experiments/selectivity/results/queue.log

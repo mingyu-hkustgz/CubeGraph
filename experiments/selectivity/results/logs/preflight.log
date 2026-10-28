@@ -1,0 +1,18 @@
+sift_uniform_2d_r0050.bin selectivity=0.00499958 candidates=[59,61]
+GT_PASS sift_uniform_2d_r0050.bin 59 61 0.004999583333333333
+CONVERT_PASS sift uniform_2d
+sift_uniform_3d_r0050.bin selectivity=0.00499892 candidates=[59,60]
+GT_PASS sift_uniform_3d_r0050.bin 59 60 0.004998916666666667
+CONVERT_PASS sift uniform_3d
+sift_uniform_4d_r0050.bin selectivity=0.00499808 candidates=[59,60]
+GT_PASS sift_uniform_4d_r0050.bin 59 60 0.004998083333333333
+CONVERT_PASS sift uniform_4d
+radius2d_0050 seconds=0.0996146 mincount=60
+radius3d_0050 seconds=0.0955982 mincount=60
+radius4d_0050 seconds=0.0956539 mincount=60
+compose2d_0050 seconds=0.164477 mincount=60
+GT_PASS compose2d_0050.bin
+GT_PASS radius2d_0050.bin
+GT_PASS radius3d_0050.bin
+GT_PASS radius4d_0050.bin
+PREFLIGHT_PASS: 7000 independent GT queries and three native conversions

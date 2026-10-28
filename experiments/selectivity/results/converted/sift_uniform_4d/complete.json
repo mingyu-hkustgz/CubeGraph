@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "dataset": "sift",
+  "metadata": "uniform_4d",
+  "workload_sha256": "7b833de03dd036eba9288844eada13b841e70a27abbf2cf1846bae62ce55ca0a",
+  "vectors_and_query_order_verified": true,
+  "metadata_verified": true,
+  "integer_bounds_exact": false,
+  "generated_sha256": {
+    "fixedcard_r0050_gt.bin": "9122adff6ab75fc99938171c7d4a134980e235fd069cd55fa5697d0bd7cb785b",
+    "fixedcard_r0050_constraints.bin": "62f4858977f3eb9cb02f2e5ecca451ecb77c404a6ee7aefe5a30a85b6fbce9a9"
+  }
+}
