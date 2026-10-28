@@ -26,7 +26,7 @@ supplementary report so broader-filter reversals are still visible.
   bounds for iRangeGraph. Author algorithm sources remain unchanged.
 - Three single-threaded repetitions, 20 warm-ups, widths 20/32/64/128/256/512/
   1024/2048 (ACORN additionally 4096). The operating point is the smallest
-  tested width reaching 99% recall in all three repeats; QPS is their median.
+  tested width with valid predicate-satisfying output and 99% recall in all three repeats; QPS is their median.
   Non-reaching settings remain reported. ACORN mask preparation is untimed.
 - POST keeps its existing candidate-budget search and timing boundary,
   including the prior lightweight recall bookkeeping. Returned IDs are now
@@ -58,3 +58,18 @@ records input/index/binary hashes and audits outputs. A failed stage must be
 inspected and preserved before resuming; existing complete stages are skipped
 and their measurement outputs re-audited. Do not run other work on the server
 while measurements are active.
+
+## Invalid baseline outputs
+
+The first 0.5% SIFT 2D ACORN query at width 20 stopped the original strict
+harness. A preserved diagnostic reproduced query 145 returning object 118295
+outside its box. This is consistent with the previously documented unfiltered
+initial-result insertion in the pinned ACORN implementation. The library and
+index are unchanged. Instrumentation v2 saves every raw ID and records predicate
+violation counts outside timing, allowing later widths to be measured. An
+independent auditor labels those cells `FAIL_PREDICATE`; collection may verify
+that failure evidence, but such cells are never valid performance points.
+Structural output errors (range, negative IDs other than -1, duplicates) still
+abort. Curves and operating points require all three repetitions to be valid.
+The initial stopped attempt and diagnostic are retained with their original
+sources and binaries; already completed other-method measurements are reused.

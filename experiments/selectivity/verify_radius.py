@@ -3,6 +3,7 @@
 import argparse,csv,json,multiprocessing as mp,struct,hashlib
 from pathlib import Path
 import numpy as np
+from audit_validity import check_ids
 
 def sha(p):
  h=hashlib.sha256()
@@ -62,23 +63,27 @@ def main():
    print('GT_PASS',path.name,flush=True)
    if a.gt_only:continue
    for method in ('cg','post','acorn'):
-    csvpath=a.results/f'{method}_{path.stem}.csv';rows=list(csv.DictReader(csvpath.open()));expected={(ef,rep) for ef in ([20,2048] if a.smoke else [20,32,64,128,256,512,1024,2048]) for rep in ([1] if a.smoke else [1,2,3])};seen=set();artifacts={}
+    csvpath=a.results/f'{method}_{path.stem}.csv';rows=list(csv.DictReader(csvpath.open()));expected={(ef,rep) for ef in ([20,2048] if a.smoke else [20,32,64,128,256,512,1024,2048]) for rep in ([1] if a.smoke else [1,2,3])};seen=set();artifacts={};checks=[]
     for r in rows:
      ef,rep=int(r['search_width']),int(r['repeat']);assert (ef,rep) not in seen;seen.add((ef,rep))
      assert int(r['queries'])==nq and int(r['k'])==k and int(r['dimension'])==d and r['method']==method and r['predicate']==('compose' if kind else 'radius') and float(r['target_ratio'])==ratio
      assert abs(float(r['measured_selectivity'])-counts.sum()/(nq*len(M)))<1e-10
      idpath=Path(str(csvpath)+f'.ef{ef}.rep{rep}.ids.bin');ids=np.fromfile(idpath,dtype='<i8').reshape(nq,k);hits=0;denom=int((gt>=0).sum())
-     for qi,rr in enumerate(ids):
-      assert np.all(rr>=-1);got=rr[rr>=0];assert np.all(got<len(M)) and len(set(got))==len(got)
-      assert np.all(predicate(M[got],params[qi],d,kind)),(idpath,qi,'outside predicate')
-      hits+=len(set(got)&set(gt[qi][gt[qi]>=0]))
-     recall=hits/denom if denom else 1.;assert abs(recall-float(r['recall']))<1e-10
+     check=check_ids(ids,gt,len(M),lambda qi,got: predicate(M[got],params[qi],d,kind))
+     if method!='acorn':assert check['valid'],(idpath,check)
+     if 'valid' in r:
+      assert int(r['valid'])==int(check['valid']) and int(r['predicate_violations'])==check['predicate_violations']
+     else:assert check['valid'], 'unclassified invalid measurement'
+     assert abs(check['recall']-float(r['recall']))<1e-10
+     checks.append(dict(ef=ef,repeat=rep,**check))
      qps=float(r['qps']);seconds=float(r['search_seconds']);assert np.isfinite(qps) and qps>0 and abs(qps-nq/seconds)/qps<1e-9
      assert 0<=float(r['p50_us'])<=float(r['p95_us']) and float(r['prep_us_mean'])>=0
      artifacts[idpath.name]=sha(idpath)
     assert seen==expected,(csvpath,'missing cells',expected-seen)
-    report['results'][csvpath.name]={'sha256':sha(csvpath),'rows':len(rows),'ids_sha256':artifacts};print('RESULT_PASS',csvpath.name,flush=True)
+    report['results'][csvpath.name]={'sha256':sha(csvpath),'rows':len(rows),'ids_sha256':artifacts,'cells':checks,'invalid_cells':sum(not c['valid'] for c in checks)};print('RESULT_PASS',csvpath.name,flush=True)
   if not a.smoke:assert len(report['workloads'])==4
+  report['invalid_cells']=sum(v['invalid_cells'] for v in report['results'].values())
+  if report['invalid_cells']:report['status']='CHECKED_WITH_INVALID_CELLS'
  except Exception as e:
   report['status']='FAIL';report['problems'].append(repr(e));raise
  finally:

@@ -48,6 +48,14 @@ if [ ! -f provenance/compiled.complete ]; then
  touch provenance/compiled.complete
 fi
 sha256sum -c provenance/compiled.sha256 >logs/compiled-verification.log
+if [ ! -f provenance/compiled-v2.complete ]; then
+ g++ "${flags[@]}" -I"$AC" "$SRC/bench_acorn.cpp" "$AC/build/faiss/libfaiss.a" -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -ldl -lm -o bin/acorn-v2
+ g++ "${flags[@]}" -ffp-contract=off -DACORN_DRIVER -I"$AC" "$SRC/bench_radius.cpp" "$AC/build/faiss/libfaiss.a" -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -ldl -lm -o bin/radius_acorn-v2
+ sha256sum bin/*-v2 "$SRC"/*.{cpp,py,sh,h} "$REPO/experiments/bench_bottom_up.cpp" "$REPO/experiments/audit_box.py" >provenance/compiled-v2.sha256
+ touch provenance/compiled-v2.complete
+fi
+sha256sum -c provenance/compiled-v2.sha256 >logs/compiled-v2-verification.log
+python3 "$SRC/audit_validity.py" >logs/validity-selftest.log
 { date -Is; uname -a; g++ --version; lscpu; free -h; } >provenance/environment.txt
 stage preflight python3 "$SRC/preflight.py" "$OUT"
 configs=('sift uniform_2d' 'sift uniform_3d' 'sift uniform_4d' 'yfcc real_2d' 'yfcc real_3d' 'wikitext1m real_2d' 'wikitext1m real_3d' 'msmarc10m uniform_2d' 'msmarc10m uniform_3d' 'msmarc10m uniform_4d')
@@ -83,8 +91,8 @@ for cfg in "${configs[@]}"; do
  fi
  for rep in 1 2 3; do
   dir="$OUT/results/acorn_${tag}_rep$rep"; mkdir -p "$dir"
-  stage "query_acorn_${tag}_rep$rep" env OMP_NUM_THREADS=32 bin/acorn --dataset "$ds" --metadata "$meta" --cube-data-root "$data" --index-dir "$acix" --output-dir "$dir" --workload-dir "$wl" --M 32 --gamma 12 --M-beta 64 --queries 1000 --gt-threads 32 --ratios 0.005 --ef-values 20,32,64,128,256,512,1024,2048,4096
-  run python3 "$REPO/experiments/audit_box.py" "$dir/${ds}_M32_g12_mb64_${meta}.csv" "$ds" "$meta" "$wl" "$data" acorn --ratio 50 >"logs/audit_acorn_${tag}_rep$rep.log" 2>&1
+  stage "query_acorn_${tag}_rep$rep" env OMP_NUM_THREADS=32 bin/acorn-v2 --dataset "$ds" --metadata "$meta" --cube-data-root "$data" --index-dir "$acix" --output-dir "$dir" --workload-dir "$wl" --M 32 --gamma 12 --M-beta 64 --queries 1000 --gt-threads 32 --ratios 0.005 --ef-values 20,32,64,128,256,512,1024,2048,4096
+  run python3 "$SRC/audit_acorn.py" "$dir/${ds}_M32_g12_mb64_${meta}.csv" "$ds" "$meta" "$wl" "$data" acorn --ratio 50 >"logs/audit_acorn_${tag}_rep$rep.log" 2>&1
  done
  # Extend the matched-index search-mode comparison on its two original datasets.
  if [ "$meta" = uniform_2d ] && { [ "$ds" = sift ] || [ "$ds" = msmarc10m ]; }; then
@@ -102,7 +110,7 @@ for w in "$OUT/radius/workloads/"*.bin; do
  for method in cg post acorn; do
   binary=bin/radius; ix="$ROOT/bottom-up-20261015-final/indexes/sift_uniform_${d}d.cube"
   if [ "$method" = post ]; then ix="$BASE/DATA/sift/uniform_${d}d_sift.post"; fi
-  if [ "$method" = acorn ]; then binary=bin/radius_acorn; ix="$ROOT/acorn-rerun/indexes/acorn/sift_M32_g12_mb64.index"; fi
+  if [ "$method" = acorn ]; then binary=bin/radius_acorn-v2; ix="$ROOT/acorn-rerun/indexes/acorn/sift_M32_g12_mb64.index"; fi
   stage "query_${method}_$name" "$binary" "$method" "$BASE/DATA/sift" "$ix" "$w" "$OUT/radius/results/${method}_$name.csv" 0
  done
 done

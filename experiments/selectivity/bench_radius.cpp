@@ -37,7 +37,7 @@ int main(int argc,char**argv){try{
  prep_us[qi]=elapsed(t)*1e6;
  }
  double prepmean=std::accumulate(prep_us.begin(),prep_us.end(),0.)/w.nq;
- std::ofstream csv(out);csv<<std::setprecision(12)<<"dataset,dimension,predicate,target_ratio,measured_selectivity,queries,k,method,search_width,repeat,recall,qps,p50_us,p95_us,prep_us_mean,prep_us_p95,index_bytes,load_seconds,search_seconds\n";
+ std::ofstream csv(out);csv<<std::setprecision(12)<<"dataset,dimension,predicate,target_ratio,measured_selectivity,queries,k,method,search_width,repeat,recall,qps,p50_us,p95_us,prep_us_mean,prep_us_p95,index_bytes,load_seconds,search_seconds,valid,predicate_violations\n";
  auto search=[&](size_t qi,unsigned ef,int64_t*ids){
 #ifdef ACORN_DRIVER
  float distances[20];index->search(1,Q.x.data()+qi*Q.d,20,distances,ids,masks.data()+qi*X.n);
@@ -58,9 +58,26 @@ int main(int argc,char**argv){try{
  std::vector<int64_t>ids(w.nq*20,-1);std::vector<double>lat(w.nq);auto t=Clock::now();for(size_t qi=0;qi<w.nq;qi++){auto q0=Clock::now();search(qi,ef,ids.data()+qi*20);lat[qi]=elapsed(q0)*1e6;}double seconds=elapsed(t);
  // Audit and artifact IO are outside the timed region for all three methods.
  std::string idpath=out.string()+".ef"+std::to_string(ef)+".rep"+std::to_string(rep)+".ids.bin";std::ofstream idfile(idpath,std::ios::binary);idfile.write((char*)ids.data(),ids.size()*8);require(bool(idfile),"ID write failed");idfile.close();
- uint64_t hits=0,denom=0;for(size_t qi=0;qi<w.nq;qi++){std::vector<int64_t>seen;for(int k=0;k<20;k++){auto id=ids[qi*20+k];if(id<0)continue;require(size_t(id)<M.n&&qualifies(M.x.data()+id*M.d,w.p[qi],w.d,w.kind),"invalid returned ID or predicate violation: query="+std::to_string(qi)+" id="+std::to_string(id)+" eligible="+std::to_string(w.counts[qi]));require(std::find(seen.begin(),seen.end(),id)==seen.end(),"duplicate ID");seen.push_back(id);hits+=std::find(w.gt.begin()+qi*20,w.gt.begin()+(qi+1)*20,id)!=w.gt.begin()+(qi+1)*20;}for(int k=0;k<20;k++)denom+=w.gt[qi*20+k]>=0;}
+ uint64_t hits=0,denom=0,predicate_violations=0;
+ for(size_t qi=0;qi<w.nq;qi++){
+  std::vector<int64_t>seen;
+  for(int k=0;k<20;k++){
+   auto id=ids[qi*20+k];require(id>=-1,"invalid negative ID");if(id==-1)continue;
+   require(size_t(id)<M.n,"out-of-range ID");
+   const bool eligible=qualifies(M.x.data()+id*M.d,w.p[qi],w.d,w.kind);
+#ifdef ACORN_DRIVER
+   predicate_violations+=!eligible;
+#else
+   require(eligible,"predicate violation");
+#endif
+   require(std::find(seen.begin(),seen.end(),id)==seen.end(),"duplicate ID");seen.push_back(id);
+   hits+=std::find(w.gt.begin()+qi*20,w.gt.begin()+(qi+1)*20,id)!=w.gt.begin()+(qi+1)*20;
+  }
+  for(int k=0;k<20;k++)denom+=w.gt[qi*20+k]>=0;
+ }
 
- double sel=double(std::accumulate(w.counts.begin(),w.counts.end(),uint64_t(0)))/(w.nq*double(M.n));double recall=denom?double(hits)/denom:1.;csv<<"sift,"<<w.d<<','<<(w.kind?"compose":"radius")<<','<<w.ratio<<','<<sel<<','<<w.nq<<",20,"<<method<<','<<ef<<','<<rep<<','<<recall<<','<<w.nq/seconds<<','<<percentile(lat,.5)<<','<<percentile(lat,.95)<<','<<prepmean<<','<<percentile(prep_us,.95)<<','<<index_bytes<<','<<load_seconds<<','<<seconds<<'\n';csv.flush();std::cout<<method<<" d="<<w.d<<" kind="<<w.kind<<" ratio="<<w.ratio<<" rep="<<rep<<" ef="<<ef<<" recall="<<recall<<" qps="<<w.nq/seconds<<std::endl;
+
+ double sel=double(std::accumulate(w.counts.begin(),w.counts.end(),uint64_t(0)))/(w.nq*double(M.n));double recall=denom?double(hits)/denom:1.;csv<<"sift,"<<w.d<<','<<(w.kind?"compose":"radius")<<','<<w.ratio<<','<<sel<<','<<w.nq<<",20,"<<method<<','<<ef<<','<<rep<<','<<recall<<','<<w.nq/seconds<<','<<percentile(lat,.5)<<','<<percentile(lat,.95)<<','<<prepmean<<','<<percentile(prep_us,.95)<<','<<index_bytes<<','<<load_seconds<<','<<seconds<<','<<(predicate_violations==0)<<','<<predicate_violations<<'\n';csv.flush();std::cout<<method<<" d="<<w.d<<" kind="<<w.kind<<" ratio="<<w.ratio<<" rep="<<rep<<" ef="<<ef<<" recall="<<recall<<" qps="<<w.nq/seconds<<std::endl;
  }
 #ifdef ACORN_DRIVER
  delete index;

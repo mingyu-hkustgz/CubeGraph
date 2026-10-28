@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
         std::ofstream csv(csv_path, std::ios::app);
         if (!csv) throw std::runtime_error("cannot open output " + csv_path.string());
         if (new_csv) {
-            csv << "dataset,metadata,target_ratio,measured_selectivity,queries,k,M,gamma,M_beta,ef_search,recall,qps,build_seconds,index_bytes,prep_seconds,seed\n";
+            csv << "dataset,metadata,target_ratio,measured_selectivity,queries,k,M,gamma,M_beta,ef_search,recall,qps,build_seconds,index_bytes,prep_seconds,seed,valid,predicate_violations\n";
         }
         csv << std::setprecision(10);
 
@@ -403,13 +403,15 @@ int main(int argc, char** argv) {
                 const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
                 const double qps = static_cast<double>(args.query_count) / seconds;
                 const double recall = recall_at_k(ids, workload.groundtruth, args.k);
+                uint64_t predicate_violations=0;
                 for (int qi=0; qi<args.query_count; ++qi) {
                     std::unordered_set<faiss::idx_t> seen;
                     for (int rank=0; rank<args.k; ++rank) {
                         auto id=ids[size_t(qi)*args.k+rank];
                         if (id==-1) continue;
-                        if (id<0 || size_t(id)>=base.n || !workload.masks[size_t(qi)*base.n+id])
-                            throw std::runtime_error("out-of-mask result");
+                        if (id<0 || size_t(id)>=base.n)
+                            throw std::runtime_error("invalid result ID");
+                        if (!workload.masks[size_t(qi)*base.n+id]) ++predicate_violations;
                         if (!seen.insert(id).second) throw std::runtime_error("duplicate result");
                     }
                 }
@@ -433,7 +435,8 @@ int main(int argc, char** argv) {
                     << workload.measured_selectivity << ',' << args.query_count << ',' << args.k << ','
                     << args.m << ',' << args.gamma << ',' << args.m_beta << ',' << index->acorn.efSearch << ','
                     << recall << ',' << qps << ',' << build_seconds << ',' << index_bytes << ','
-                    << workload.prep_seconds << ',' << args.seed << '\n';
+                    << workload.prep_seconds << ',' << args.seed << ',' << (predicate_violations==0) << ',' << predicate_violations << '\n';
+                if(predicate_violations) std::cerr << "INVALID_PREDICATE ef=" << ef << " violations=" << predicate_violations << "; raw IDs retained, cell excluded from valid performance\n";
                 csv.flush();
             }
         }
