@@ -6,7 +6,7 @@ A high-performance C++ library for filtered approximate nearest neighbor (ANN) s
 ## Paper and reproducibility
 
 - [Paper source and submission PDF](https://github.com/mingyu-hkustgz/Cube-Graph-paper)
-- [Technical report, including the complete appendix](technical_report.pdf)
+- [Complete paper, references, and appendix PDF](https://github.com/mingyu-hkustgz/Cube-Graph-paper/blob/main/sample-sigconf.pdf)
 - [Shared box, radius, layer and update experiments](experiments/README.md)
 - [Audited predetermined/on-the-fly comparison](experiments/search_modes/README.md)
 - [Audited high-aspect-ratio results and protocol](experiments/aspect_ratio/README.md)
