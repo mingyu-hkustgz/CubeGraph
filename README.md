@@ -55,6 +55,10 @@ all 16 combinations reach 99% recall, with lower throughput on thinner boxes.
 - **Vector files**: fvecs format (`[dim: int32][vec[0]: float]...`)
 - **Metadata files**: Binary format (`[n: size_t][d: size_t][vector_0: float[d]]...`)
 
+### Data Source
+- Pls refer to our Google Drive: https://drive.google.com/drive/folders/1uU0CE0mW8G3Dc4Ew9BEjq7FjOLAMTY4e?usp=drive_link
+  - The yfcc and wiki dataset used in our paper 
+
 ### Hierarchical Cube Structure
 
 Each layer divides attribute space into `(2^(layer_id+1))^attr_dim` cubes:
